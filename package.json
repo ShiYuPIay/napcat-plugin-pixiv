@@ -1,0 +1,48 @@
+{
+  "name": "napcat-plugin-pixiv",
+  "version": "0.1.0",
+  "description": "使用第三方 API 搜索与推荐 Pixiv 插画的 NapCat 插件，支持合并转发多张图片。",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "napcat",
+    "pixiv",
+    "插件",
+    "setu",
+    "illustration"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  },
+  "napcat": {
+    "tags": ["Pixiv 搜索", "推荐插画"],
+    "configSchema": {
+      "type": "object",
+      "properties": {
+        "commandPrefix": {
+          "type": "string",
+          "default": "#pixiv",
+          "description": "调用插件的指令前缀，例如 #pixiv"
+        },
+        "maxResults": {
+          "type": "integer",
+          "default": 3,
+          "description": "每次搜索或推荐返回的最大图片数量"
+        },
+        "allowR18": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否允许返回 R18 插画，默认为否"
+        }
+      }
+    }
+  }
+}
