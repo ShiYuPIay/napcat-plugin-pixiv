@@ -12,7 +12,6 @@
 ## 安装与使用
 
 1. **克隆仓库**：
-# 1. 拉取仓库
 git clone https://github.com/ShiYuPIay/napcat-plugin-pixiv.git
 
 # 2. 安装依赖
