@@ -27,17 +27,55 @@ const _fetch = globalThis.fetch
 /**
  * 带超时的 fetch，避免第三方接口卡死导致消息处理挂起。
  */
-async function fetchWithTimeout(url, timeoutMs = 9000) {
+async function fetchWithTimeout(url, timeoutMs = 9000, init) {
     if (typeof _fetch !== 'function') {
         throw new Error('当前运行环境不支持 fetch（请使用 Node 18+ 或安装 undici 依赖）');
     }
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
     try {
-        return await _fetch(url, { signal: controller.signal });
+        return await _fetch(url, { ...init, signal: controller.signal });
     }
     finally {
         clearTimeout(t);
+    }
+}
+
+/**
+ * 从接口返回的多种图片链接中挑选最稳定可下载的 URL。
+ * 对 NapCat 来说，优先使用 regular / small，避免 original 在部分场景 404。
+ */
+function pickImageUrl(urls) {
+    if (!urls)
+        return '';
+    const candidates = [urls.regular, urls.small, urls.thumb, urls.original]
+        .filter((u) => typeof u === 'string' && /^https?:\/\//.test(u));
+    return candidates[0] || '';
+}
+
+/**
+ * 预检查图片 URL 是否可访问，避免在发送合并转发时由 NapCat 下载失败导致整条消息报错。
+ */
+async function isImageUrlAvailable(url) {
+    if (!url)
+        return false;
+    try {
+        const headRes = await fetchWithTimeout(url, 5000, { method: 'HEAD' });
+        if (headRes.ok)
+            return true;
+    }
+    catch {
+        // 某些 CDN 不支持 HEAD，继续尝试 GET 探测。
+    }
+    try {
+        const getRes = await fetchWithTimeout(url, 7000, {
+            method: 'GET',
+            headers: { Range: 'bytes=0-0' },
+        });
+        return getRes.ok;
+    }
+    catch {
+        return false;
     }
 }
 
@@ -58,17 +96,21 @@ async function fetchIllusts(params) {
             throw new Error(`HTTP ${res.status}`);
         const json = (await res.json());
         const data = (json === null || json === void 0 ? void 0 : json.data) || [];
-        const illusts = data.map((item) => {
-            var _a, _b;
-            return {
+        const illusts = [];
+        for (const item of data) {
+            const pickedUrl = pickImageUrl(item.urls);
+            if (!(await isImageUrlAvailable(pickedUrl))) {
+                continue;
+            }
+            illusts.push({
                 pid: item.pid,
                 title: item.title,
                 author: item.author,
                 tags: item.tags || [],
-                url: ((_a = item.urls) === null || _a === void 0 ? void 0 : _a.original) || ((_b = item.urls) === null || _b === void 0 ? void 0 : _b.regular) || '',
+                url: pickedUrl,
                 r18: Boolean(item.r18),
-            };
-        });
+            });
+        }
         return illusts;
     }
     catch (err) {
