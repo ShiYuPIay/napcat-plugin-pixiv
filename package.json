@@ -15,15 +15,19 @@
     "setu",
     "illustration"
   ],
-  "author": "Your Name",
-  "license": "MIT",
+  "author": "希儿 (shiYuPIay)",
+  "license": "AGPL-3.0-only",
   "dependencies": {
+    "undici": "^6.0.0"
   },
   "devDependencies": {
     "typescript": "^5.3.3"
   },
   "napcat": {
-    "tags": ["Pixiv 搜索", "推荐插画"],
+    "tags": [
+      "Pixiv 搜索",
+      "推荐插画"
+    ],
     "configSchema": {
       "type": "object",
       "properties": {
@@ -41,6 +45,11 @@
           "type": "boolean",
           "default": false,
           "description": "是否允许返回 R18 插画，默认为否"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用 Pixiv 搜索与推荐功能"
         }
       }
     }
