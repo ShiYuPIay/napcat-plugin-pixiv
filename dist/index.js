@@ -2,7 +2,6 @@
  * Author: 希儿 (shiYuPIay)
  * SPDX-License-Identifier: AGPL-3.0-only
  */
-
 "use strict";
 /**
  * NapCat Pixiv 插件主入口

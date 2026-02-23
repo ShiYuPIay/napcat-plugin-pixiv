@@ -2,7 +2,6 @@
  * Author: 希儿 (shiYuPIay)
  * SPDX-License-Identifier: AGPL-3.0-only
  */
-
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pluginState = void 0;
@@ -35,11 +34,12 @@ class PluginState {
     }
     /** 更新配置（用于 WebUI 单项变更） */
     updateConfig(partial) {
+        var _c, _d;
         this.config = { ...this.config, ...partial };
         // 尝试写回到 NapCat 的持久化存储（如果存在）
         try {
-            if (this.ctx?.pluginData) {
-                this.ctx.pluginData.config = { ...(this.ctx.pluginData.config ?? {}), ...partial };
+            if ((_c = this.ctx) === null || _c === void 0 ? void 0 : _c.pluginData) {
+                this.ctx.pluginData.config = { ...((_d = this.ctx.pluginData.config) !== null && _d !== void 0 ? _d : {}), ...partial };
             }
         }
         catch {
@@ -48,10 +48,11 @@ class PluginState {
     }
     /** 替换整个配置 */
     replaceConfig(conf) {
+        var _c;
         this.config = conf;
         // 尝试写回到 NapCat 的持久化存储（如果存在）
         try {
-            if (this.ctx?.pluginData) {
+            if ((_c = this.ctx) === null || _c === void 0 ? void 0 : _c.pluginData) {
                 this.ctx.pluginData.config = conf;
             }
         }
