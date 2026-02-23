@@ -2,8 +2,8 @@
  * Author: 希儿 (shiYuPIay)
  * SPDX-License-Identifier: AGPL-3.0-only
  */
-
 "use strict";
+var _c;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.searchIllusts = searchIllusts;
 exports.recommendIllusts = recommendIllusts;
@@ -15,15 +15,14 @@ const API_BASE = 'https://api.lolicon.app/setu/v2';
 /**
  * 兼容不同 Node 版本：优先使用全局 fetch（Node 18+），否则尝试使用 undici 的 fetch。
  */
-const _fetch = globalThis.fetch
-    ?? (() => {
-        try {
-            return require('undici').fetch;
-        }
-        catch {
-            return undefined;
-        }
-    })();
+const _fetch = (_c = globalThis.fetch) !== null && _c !== void 0 ? _c : (() => {
+    try {
+        return require('undici').fetch;
+    }
+    catch {
+        return undefined;
+    }
+})();
 /**
  * 带超时的 fetch，避免第三方接口卡死导致消息处理挂起。
  */
@@ -40,7 +39,6 @@ async function fetchWithTimeout(url, timeoutMs = 9000) {
         clearTimeout(t);
     }
 }
-
 /**
  * 向第三方接口发起请求，获取插画信息。
  * @param params 请求参数

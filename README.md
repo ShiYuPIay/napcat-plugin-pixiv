@@ -15,13 +15,11 @@
 git clone https://github.com/ShiYuPIay/napcat-plugin-pixiv.git
 
 # 2. 安装依赖
-pnpm install
+npm install
 
 # 3. 构建项目
-pnpm run build
+npm run build
 
-# 4. 开发调试
-pnpm run dev
 
 2. **放置插件**：将构建好的插件目录复制到 NapCat 配置中的插件目录下（通常为 `napcat-data/plugins/`）。也可以直接通过 [napcat-plugin-template](https://github.com/NapNeko/napcat-plugin-template) 的仓库模板创建自己的仓库，拉取后修改 `package.json` 的 `name`、`description` 等信息，并将本插件的 `src` 文件覆盖模板。
 
