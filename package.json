@@ -1,6 +1,7 @@
 {
   "name": "napcat-plugin-pixiv",
   "version": "0.1.0",
+  "plugin": "Pixiv 搜索与推荐",
   "description": "使用第三方 API 搜索与推荐 Pixiv 插画的 NapCat 插件，支持合并转发多张图片。",
   "main": "dist/index.js",
   "scripts": {
