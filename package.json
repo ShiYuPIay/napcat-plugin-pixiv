@@ -17,7 +17,7 @@
     "illustration"
   ],
   "author": "希儿 (shiYuPIay)",
-  "license": "AGPL-3.0-only",
+  "license": "AGPL-3.0-license",
   "dependencies": {
     "undici": "^6.0.0"
   },
