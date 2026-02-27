@@ -26,8 +26,9 @@
   },
   "napcat": {
     "tags": [
-      "Pixiv 搜索",
-      "推荐插画"
+      "图片",
+      "搜索",
+      "娱乐"
     ],
     "configSchema": {
       "type": "object",
