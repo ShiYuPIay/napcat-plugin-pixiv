@@ -12,25 +12,19 @@
 ## 安装与使用
 
 1. **克隆仓库**：
+bash
 git clone https://github.com/ShiYuPIay/napcat-plugin-pixiv.git
+bash
+3. **放置插件**：将构建好的插件目录复制到 NapCat 配置中的插件目录下（通常为 `napcat-data/plugins/`）。也可以直接通过 [napcat-plugin-template](https://github.com/NapNeko/napcat-plugin-template) 的仓库模板创建自己的仓库，拉取后修改 `package.json` 的 `name`、`description` 等信息，并将本插件的 `src` 文件覆盖模板。
 
-# 2. 安装依赖
-npm install
-
-# 3. 构建项目
-npm run build
-
-
-2. **放置插件**：将构建好的插件目录复制到 NapCat 配置中的插件目录下（通常为 `napcat-data/plugins/`）。也可以直接通过 [napcat-plugin-template](https://github.com/NapNeko/napcat-plugin-template) 的仓库模板创建自己的仓库，拉取后修改 `package.json` 的 `name`、`description` 等信息，并将本插件的 `src` 文件覆盖模板。
-
-3. **启用插件**：登录 NapCat 管理后台，在插件管理页面启用 **Pixiv 插件**。可在“配置”栏中调整参数：
+4. **启用插件**：登录 NapCat 管理后台，在插件管理页面启用 **Pixiv 插件**。可在“配置”栏中调整参数：
 
    - **启用插件**：控制功能是否生效。
    - **指令前缀**：默认 `#pixiv`，可根据需要修改，如 `/pixiv`。
    - **最大结果数量**：每次返回的作品数量，范围 1–10，默认为 3。
    - **允许 R18**：是否允许返回 R18 作品，默认为不允许。
 
-4. **使用指令**：
+5. **使用指令**：
 
    - `#pixiv 初音ミク`：搜索所有包含“初音ミク”标签的插画。
    - `#pixiv rec` 或 `#pixiv 推荐`：随机推荐多张高质量插画。
@@ -38,7 +32,7 @@ npm run build
 
 ## 运行要求
 
-- NapCat 版本需 **>= 4.14.0**（插件依赖合并转发相关能力）。
+- 最低要求NapCat 版本需 **>= 4.14.0**
 
 ## 注意事项
 
