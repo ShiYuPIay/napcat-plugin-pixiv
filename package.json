@@ -25,6 +25,7 @@
     "typescript": "^5.3.3"
   },
   "napcat": {
+    "minVersion": "4.14.0",
     "tags": [
       "图片",
       "搜索",
