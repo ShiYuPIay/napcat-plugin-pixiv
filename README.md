@@ -13,7 +13,7 @@
 
 1. **克隆仓库**：
 2. https://gh-proxy.org/https://github.com/ShiYuPIay/napcat-plugin-pixiv.git
-3. **放置插件**：将构建好的插件目录复制到 NapCat 配置中的插件目录下（通常为 `napcat-data/plugins/`）。也可以直接通过 [napcat-plugin-template](https://github.com/NapNeko/napcat-plugin-template) 的仓库模板创建自己的仓库，拉取后修改 `package.json` 的 `name`、`description` 等信息，并将本插件的 `src` 文件覆盖模板。
+3. **放置插件**：下载好的zip包插件目录复制到 NapCat 配置中的插件目录下（通常为 `napcat-data/plugins/`)
 
 4. **启用插件**：登录 NapCat 管理后台，在插件管理页面启用 **Pixiv 插件**。可在“配置”栏中调整参数：
 
