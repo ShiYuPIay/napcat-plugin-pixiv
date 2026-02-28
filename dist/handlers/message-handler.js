@@ -9,6 +9,9 @@ exports.handleMessage = handleMessage;
 const MESSAGE_POST_TYPE = 'message';
 const state_1 = require("../core/state");
 const pixiv_service_1 = require("../services/pixiv-service");
+// 匿名合并转发配置：使用系统账号头像，减少机器人身份暴露。
+const ANON_FORWARD_QQ = '10001';
+const ANON_FORWARD_NAME = '匿名用户';
 /**
  * 消息段构造函数：文本消息
  */
@@ -77,30 +80,47 @@ async function sendReply(ctx, event, message) {
  * 发送合并转发消息。将多条消息合并为一条可展开查看的聊天记录，避免刷屏。
  */
 async function sendForwardMsg(ctx, target, isGroup, nodes) {
+    if (isGroup) {
+        // 优先使用 send_forward_msg，并设置 prompt/summary/source 隐藏机器人身份。
+        try {
+            await ctx.actions.call('send_forward_msg', {
+                group_id: String(target),
+                messages: nodes,
+                prompt: '[Pixiv 消息转发]',
+                summary: `查看${nodes.length}条插画`,
+                source: '匿名转发',
+            }, ctx.adapterName, ctx.pluginManager.config);
+            return true;
+        }
+        catch (e1) {
+            var _a;
+            (_a = state_1.pluginState.logger.warn) === null || _a === void 0 ? void 0 : _a.call(state_1.pluginState.logger, 'send_forward_msg 发送失败，尝试群聊合并转发回退:', e1);
+        }
+    }
     const actionName = isGroup ? 'send_group_forward_msg' : 'send_private_forward_msg';
     const base = isGroup ? { group_id: String(target) } : { user_id: String(target) };
-    // 优先使用 OneBot 常见参数名 messages；若不兼容则回退到 message
+    // 兼容不同 OneBot 实现：优先 messages，失败回退 message。
     try {
         await ctx.actions.call(actionName, { ...base, messages: nodes }, ctx.adapterName, ctx.pluginManager.config);
         return true;
     }
-    catch (e1) {
-        var _a;
-        (_a = state_1.pluginState.logger.warn) === null || _a === void 0 ? void 0 : _a.call(state_1.pluginState.logger, '合并转发参数 messages 失败，尝试 message 回退:', e1);
+    catch (e2) {
+        var _b;
+        (_b = state_1.pluginState.logger.warn) === null || _b === void 0 ? void 0 : _b.call(state_1.pluginState.logger, '合并转发参数 messages 失败，尝试 message 回退:', e2);
     }
     try {
         await ctx.actions.call(actionName, { ...base, message: nodes }, ctx.adapterName, ctx.pluginManager.config);
         return true;
     }
-    catch (e2) {
-        state_1.pluginState.logger.error('发送合并转发失败:', e2);
+    catch (e3) {
+        state_1.pluginState.logger.error('发送合并转发失败:', e3);
         return false;
     }
 }
 /**
  * 创建一个合并转发节点，用于展示单条插画信息。
  */
-function buildForwardNode(illust, botId) {
+function buildForwardNode(illust, isGroup, botId) {
     // 构造插画标题与标签信息
     const titleLine = `${illust.title} - ${illust.author}`;
     const tagLine = illust.tags.length > 0 ? `标签: ${illust.tags.join(', ')}` : '';
@@ -111,14 +131,12 @@ function buildForwardNode(illust, botId) {
     const node = {
         type: 'node',
         data: {
-            nickname: 'PixivBot',
+            nickname: isGroup ? ANON_FORWARD_NAME : 'PixivBot',
             content,
         },
     };
-    // 若提供了机器人 ID，则设置 user_id 为机器人 ID，从而让转发节点显示机器人头像
-    if (botId) {
-        node.data.user_id = botId;
-    }
+    // 群聊默认使用匿名头像；私聊保留机器人头像。
+    node.data.user_id = isGroup ? ANON_FORWARD_QQ : (botId || ANON_FORWARD_QQ);
     return node;
 }
 /**
@@ -187,8 +205,8 @@ async function handleMessage(ctx, event) {
             }
             // 多张图片，构建合并转发。显式传入机器人的 QQ 号用于隐藏触发者信息。
             const botId = event.self_id ? String(event.self_id) : undefined;
-            const nodes = illusts.map((i) => buildForwardNode(i, botId));
             const isGroup = event.message_type === 'group';
+            const nodes = illusts.map((i) => buildForwardNode(i, isGroup, botId));
             const target = isGroup ? event.group_id : event.user_id;
             await sendForwardMsg(ctx, target, isGroup, nodes);
             return;
@@ -212,8 +230,8 @@ async function handleMessage(ctx, event) {
         }
         // 多张图片，构建合并转发。显式传入机器人的 QQ 号用于隐藏触发者信息。
         const botId2 = event.self_id ? String(event.self_id) : undefined;
-        const nodes = illusts.map((i) => buildForwardNode(i, botId2));
         const isGroup = event.message_type === 'group';
+        const nodes = illusts.map((i) => buildForwardNode(i, isGroup, botId2));
         const target = isGroup ? event.group_id : event.user_id;
         await sendForwardMsg(ctx, target, isGroup, nodes);
     }
