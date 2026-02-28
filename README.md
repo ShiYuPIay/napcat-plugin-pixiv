@@ -41,6 +41,7 @@
 ## 致谢
 
 - 插件使用开源的 [Lolicon API](https://api.lolicon.app/#/setu) 作为数据源，无需登录 Pixiv 即可获取作品信息和图片直链。
+- 插件使用开源的Napcat插件模板开发作为转发消息主要(https://github.com/NapNeko/napcat-plugin-template)
 
 ## 作者
 
