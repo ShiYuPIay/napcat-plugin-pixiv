@@ -37,7 +37,11 @@
 - 插件使用的 Lolicon API 来源于第三方服务，与 Pixiv 官方无关。因网络波动或 API 限制，某些请求可能失败，可稍后重试。
 - 当搜索或推荐返回的作品超过 1 张时，插件会使用 OneBot 的 `send_group_forward_msg` 或 `send_private_forward_msg` 接口发送合并转发消息。请确保当前的 NapCat 版本支持合并转发；如果不支持，将自动退回单条消息发送。
 - **R18 内容**：默认情况下插件不会返回 R18 插画。若开启此选项，请确保使用环境允许此类内容，并遵守相关法律法规和社区规范。
-6.插件使用开源的 [Lolicon API](https://api.lolicon.app/#/setu) 作为数据源，无需登录 Pixiv 即可获取作品信息和图片直链。
+
+## 致谢
+
+- 插件使用开源的 [Lolicon API](https://api.lolicon.app/#/setu) 作为数据源，无需登录 Pixiv 即可获取作品信息和图片直链。
+
 ## 作者
 
 希儿（shiYuPIay）
