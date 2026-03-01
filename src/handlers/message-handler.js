@@ -157,29 +157,28 @@ async function handleMessage(ctx, event) {
         const prefix = state_1.pluginState.config.commandPrefix || '#pixiv';
         if (!rawMessage.startsWith(prefix))
             return;
-        // 提取命令参数
-        const args = rawMessage.slice(prefix.length).trim().split(/\s+/).filter(Boolean);
+        const commandText = rawMessage.slice(prefix.length).trim();
         // 如果没有参数，发送帮助
-        if (args.length === 0) {
+        if (!commandText) {
             const helpLines = [
                 'Pixiv 插件帮助',
-                `${prefix} <关键词> - 搜索含有关键词的插画`,
-                `${prefix} rec - 获取随机推荐插画`,
-                `${prefix} 推荐 - 获取随机推荐插画`,
-                `${prefix} help - 显示本帮助`,
+                `${prefix}<关键词> - 搜索含有关键词的插画`,
+                `${prefix}rec - 获取随机推荐插画`,
+                `${prefix}推荐 - 获取随机推荐插画`,
+                `${prefix}help - 显示本帮助`,
             ];
             await sendReply(ctx, event, helpLines.join('\n'));
             return;
         }
-        const sub = args[0].toLowerCase();
+        const normalizedCommand = commandText.replace(/\s+/g, '').toLowerCase();
         // 处理帮助指令
-        if (sub === 'help' || sub === '帮助') {
+        if (normalizedCommand === 'help' || normalizedCommand === '帮助') {
             const helpLines = [
                 'Pixiv 插件帮助',
-                `${prefix} <关键词> - 搜索含有关键词的插画`,
-                `${prefix} rec - 获取随机推荐插画`,
-                `${prefix} 推荐 - 获取随机推荐插画`,
-                `${prefix} help - 显示本帮助`,
+                `${prefix}<关键词> - 搜索含有关键词的插画`,
+                `${prefix}rec - 获取随机推荐插画`,
+                `${prefix}推荐 - 获取随机推荐插画`,
+                `${prefix}help - 显示本帮助`,
             ];
             await sendReply(ctx, event, helpLines.join('\n'));
             return;
@@ -188,7 +187,7 @@ async function handleMessage(ctx, event) {
         const allowR18Config = Boolean(state_1.pluginState.config.allowR18);
         const allowR18 = event.message_type === 'private' ? allowR18Config : false;
         // 推荐指令
-        if (sub === 'rec' || sub === '推荐') {
+        if (normalizedCommand === 'rec' || normalizedCommand === '推荐') {
             const illusts = await (0, pixiv_service_1.recommendIllusts)(maxResults, allowR18);
             if (illusts.length === 0) {
                 await sendReply(ctx, event, '未找到推荐插画，请稍后再试。');
@@ -213,7 +212,7 @@ async function handleMessage(ctx, event) {
             return;
         }
         // 默认认为剩余参数是搜索关键字
-        const query = args.join(' ');
+        const query = commandText;
         const illusts = await (0, pixiv_service_1.searchIllusts)(query, maxResults, allowR18);
         if (illusts.length === 0) {
             await sendReply(ctx, event, `未找到与 “${query}” 相关的插画。`);
