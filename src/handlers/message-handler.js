@@ -158,6 +158,26 @@ function buildForwardNode(illust, isGroup, botId) {
     node.data.user_id = isGroup ? ANON_FORWARD_QQ : (botId || ANON_FORWARD_QQ);
     return node;
 }
+
+/**
+ * 创建日榜合并转发节点。
+ */
+function buildDailyRankingNode(illust, index) {
+    const safeTags = Array.isArray(illust.tags) && illust.tags.length > 0
+        ? illust.tags.join(', ')
+        : '无';
+    return {
+        type: 'node',
+        data: {
+            user_id: ANON_FORWARD_QQ,
+            nickname: `#${index + 1} ${illust.title}`,
+            content: [
+                imageSegment(illust.proxyUrl),
+                textSegment(`${illust.title}\n画师: ${illust.author}\nPID: ${illust.id} | ❤️ ${illust.bookmarks}\nTags: ${safeTags}`),
+            ],
+        },
+    };
+}
 /**
  * 主消息处理函数。当收到消息事件时由 plugin_onmessage 调用。
  * 判断是否匹配指令并执行搜索或推荐操作。
@@ -189,6 +209,7 @@ async function handleMessage(ctx, event) {
             return;
         }
         const normalizedCommand = commandText.replace(/\s+/g, '').toLowerCase();
+        const normalizedRawMessage = rawMessage.replace(/\s+/g, '').toLowerCase();
         // 处理帮助指令
         if (normalizedCommand === 'help' || normalizedCommand === '帮助') {
             const helpLines = [
@@ -199,6 +220,51 @@ async function handleMessage(ctx, event) {
                 `${prefix}help - 显示本帮助`,
             ];
             await sendReply(ctx, event, helpLines.join('\n'));
+            return;
+        }
+        // Pixiv 日榜（兼容无前缀调用：!pixiv日榜）
+        if (normalizedRawMessage === '!pixiv日榜' || normalizedCommand === '日榜' || normalizedCommand === 'daily') {
+            const rankings = await (0, pixiv_service_1.fetchDailyRanking)(10);
+            if (rankings.length === 0) {
+                await sendReply(ctx, event, '暂时无法获取 Pixiv 日榜，请稍后再试。');
+                return;
+            }
+            const nodes = rankings.map((illust, i) => buildDailyRankingNode(illust, i));
+            const isGroup = event.message_type === 'group';
+            if (isGroup) {
+                try {
+                    await ctx.actions.call('send_group_forward_msg', {
+                        group_id: String(event.group_id),
+                        messages: nodes,
+                        news: rankings.slice(0, 3).map((illust, i) => ({ text: `🏆 #${i + 1}: ${illust.title} (${illust.bookmarks} ❤️)` })),
+                        prompt: '[Pixiv日榜Top10]',
+                        summary: `查看${rankings.length}张今日排行插画`,
+                        source: 'Pixiv Daily Ranking',
+                    }, ctx.adapterName, ctx.pluginManager.config);
+                    return;
+                }
+                catch (e) {
+                    var _a;
+                    (_a = state_1.pluginState.logger.warn) === null || _a === void 0 ? void 0 : _a.call(state_1.pluginState.logger, '发送群日榜转发失败，尝试通用接口:', e);
+                }
+                try {
+                    await ctx.actions.call('send_forward_msg', {
+                        group_id: String(event.group_id),
+                        messages: nodes,
+                        news: rankings.slice(0, 3).map((illust, i) => ({ text: `🏆 #${i + 1}: ${illust.title} (${illust.bookmarks} ❤️)` })),
+                        prompt: '[Pixiv日榜Top10]',
+                        summary: `查看${rankings.length}张今日排行插画`,
+                        source: 'Pixiv Daily Ranking',
+                    }, ctx.adapterName, ctx.pluginManager.config);
+                    return;
+                }
+                catch (e2) {
+                    var _b;
+                    (_b = state_1.pluginState.logger.warn) === null || _b === void 0 ? void 0 : _b.call(state_1.pluginState.logger, 'send_forward_msg 发送日榜失败，回退普通转发:', e2);
+                }
+            }
+            const target = event.message_type === 'group' ? event.group_id : event.user_id;
+            await sendForwardMsg(ctx, target, event.message_type === 'group', nodes);
             return;
         }
         const maxResults = Math.min(10, Math.max(1, Number(state_1.pluginState.config.maxResults) || 3));

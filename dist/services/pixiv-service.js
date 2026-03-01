@@ -3,19 +3,21 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 "use strict";
-var _a;
+var _b;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.searchIllusts = searchIllusts;
 exports.recommendIllusts = recommendIllusts;
+exports.fetchDailyRanking = fetchDailyRanking;
 /**
  * 第三方接口地址。我们使用 lolicon.app 提供的公开接口，它会从 Pixiv 抽取插画信息并提供 CDN 直链。
  * 文档: https://api.lolicon.app/#/setu
  */
 const API_BASE = 'https://api.lolicon.app/setu/v2';
+const PIXIV_RANKING_API = 'https://api.obfs.dev/api/pixiv/ranking';
 /**
  * 兼容不同 Node 版本：优先使用全局 fetch（Node 18+），否则尝试使用 undici 的 fetch。
  */
-const _fetch = (_a = globalThis.fetch) !== null && _a !== void 0 ? _a : (() => {
+const _fetch = (_b = globalThis.fetch) !== null && _b !== void 0 ? _b : (() => {
     try {
         return require('undici').fetch;
     }
@@ -141,4 +143,52 @@ async function recommendIllusts(num, allowR18) {
         size: 'regular',
     };
     return fetchIllusts(params);
+}
+/**
+ * 获取 Pixiv 日榜数据。
+ *
+ * 说明：该能力依赖第三方聚合接口，可能会因网络或服务端限流而返回空数组。
+ * 返回结构会尽量兼容消息处理层所需字段。
+ */
+async function fetchDailyRanking(num = 10) {
+    try {
+        const limit = Math.min(30, Math.max(1, Number(num) || 10));
+        const sp = new URLSearchParams({ mode: 'daily', page: '1' });
+        const res = await fetchWithTimeout(`${PIXIV_RANKING_API}?${sp.toString()}`, 9000);
+        if (!res.ok)
+            throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json());
+        const list = Array.isArray(json === null || json === void 0 ? void 0 : json.illusts)
+            ? json.illusts
+            : Array.isArray(json === null || json === void 0 ? void 0 : json.data)
+                ? json.data
+                : [];
+        const result = [];
+        for (const item of list.slice(0, limit)) {
+            var _a;
+            const id = Number(item === null || item === void 0 ? void 0 : item.id) || Number(item === null || item === void 0 ? void 0 : item.pid) || 0;
+            const imageUrl = (typeof (item === null || item === void 0 ? void 0 : item.proxyUrl) === 'string' && item.proxyUrl)
+                || (typeof (item === null || item === void 0 ? void 0 : item.url) === 'string' && item.url)
+                || pickImageUrl(item === null || item === void 0 ? void 0 : item.urls);
+            if (!(await isImageUrlAvailable(imageUrl)))
+                continue;
+            result.push({
+                id,
+                title: String((item === null || item === void 0 ? void 0 : item.title) || `作品 ${id || result.length + 1}`),
+                author: String(((_a = item === null || item === void 0 ? void 0 : item.user) === null || _a === void 0 ? void 0 : _a.name) || (item === null || item === void 0 ? void 0 : item.author) || '未知画师'),
+                bookmarks: Number((item === null || item === void 0 ? void 0 : item.totalBookmarks) || (item === null || item === void 0 ? void 0 : item.bookmarks) || 0),
+                tags: Array.isArray(item === null || item === void 0 ? void 0 : item.tags)
+                    ? item.tags
+                        .map((tag) => (typeof tag === 'string' ? tag : String((tag === null || tag === void 0 ? void 0 : tag.name) || '')))
+                        .filter(Boolean)
+                    : [],
+                proxyUrl: imageUrl,
+            });
+        }
+        return result;
+    }
+    catch (err) {
+        console.warn('获取 Pixiv 日榜失败', err);
+        return [];
+    }
 }
