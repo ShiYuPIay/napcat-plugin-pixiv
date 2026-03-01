@@ -82,20 +82,38 @@ async function sendReply(ctx, event, message) {
  */
 async function sendForwardMsg(ctx, target, isGroup, nodes) {
     if (isGroup) {
-        // 优先使用 send_forward_msg，并设置 prompt/summary/source 隐藏机器人身份。
+        // 增加轻微随机延迟，尽量降低风控触发概率。
+        await new Promise((resolve) => setTimeout(resolve, 1000 + Math.random() * 2000));
+        // 群聊优先使用 send_group_forward_msg，并设置扩展字段优化卡片展示。
         try {
-            await ctx.actions.call('send_forward_msg', {
+            await ctx.actions.call('send_group_forward_msg', {
                 group_id: String(target),
                 messages: nodes,
-                prompt: '[Pixiv 消息转发]',
+                prompt: '[Pixiv推送]',
                 summary: `查看${nodes.length}条插画`,
-                source: '匿名转发',
+                source: 'Pixiv',
+                news: nodes.slice(0, 4).map((_, i) => ({ text: `${ANON_FORWARD_NAME}: 作品 ${i + 1}` })),
             }, ctx.adapterName, ctx.pluginManager.config);
             return true;
         }
         catch (e1) {
             var _a;
-            (_a = state_1.pluginState.logger.warn) === null || _a === void 0 ? void 0 : _a.call(state_1.pluginState.logger, 'send_forward_msg 发送失败，尝试群聊合并转发回退:', e1);
+            (_a = state_1.pluginState.logger.warn) === null || _a === void 0 ? void 0 : _a.call(state_1.pluginState.logger, 'send_group_forward_msg 发送失败，尝试兼容接口回退:', e1);
+        }
+        // 兼容实现：部分服务端仅支持 send_forward_msg。
+        try {
+            await ctx.actions.call('send_forward_msg', {
+                group_id: String(target),
+                messages: nodes,
+                prompt: '[Pixiv推送]',
+                summary: `查看${nodes.length}条插画`,
+                source: 'Pixiv',
+            }, ctx.adapterName, ctx.pluginManager.config);
+            return true;
+        }
+        catch (e2) {
+            var _b;
+            (_b = state_1.pluginState.logger.warn) === null || _b === void 0 ? void 0 : _b.call(state_1.pluginState.logger, 'send_forward_msg 发送失败，继续尝试标准接口:', e2);
         }
     }
     const actionName = isGroup ? 'send_group_forward_msg' : 'send_private_forward_msg';
@@ -105,16 +123,16 @@ async function sendForwardMsg(ctx, target, isGroup, nodes) {
         await ctx.actions.call(actionName, { ...base, messages: nodes }, ctx.adapterName, ctx.pluginManager.config);
         return true;
     }
-    catch (e2) {
-        var _b;
-        (_b = state_1.pluginState.logger.warn) === null || _b === void 0 ? void 0 : _b.call(state_1.pluginState.logger, '合并转发参数 messages 失败，尝试 message 回退:', e2);
+    catch (e3) {
+        var _c;
+        (_c = state_1.pluginState.logger.warn) === null || _c === void 0 ? void 0 : _c.call(state_1.pluginState.logger, '合并转发参数 messages 失败，尝试 message 回退:', e3);
     }
     try {
         await ctx.actions.call(actionName, { ...base, message: nodes }, ctx.adapterName, ctx.pluginManager.config);
         return true;
     }
-    catch (e3) {
-        state_1.pluginState.logger.error('发送合并转发失败:', e3);
+    catch (e4) {
+        state_1.pluginState.logger.error('发送合并转发失败:', e4);
         return false;
     }
 }
