@@ -8,6 +8,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.searchIllusts = searchIllusts;
 exports.recommendIllusts = recommendIllusts;
 exports.fetchDailyRanking = fetchDailyRanking;
+exports.checkApiHealth = checkApiHealth;
 /**
  * 第三方接口地址。我们使用 lolicon.app 提供的公开接口，它会从 Pixiv 抽取插画信息并提供 CDN 直链。
  * 文档: https://api.lolicon.app/#/setu
@@ -143,6 +144,30 @@ async function recommendIllusts(num, allowR18) {
         size: 'regular',
     };
     return fetchIllusts(params);
+}
+/**
+ * 检查第三方接口健康状态，用于部署验收与故障排查。
+ */
+async function checkApiHealth() {
+    const result = {
+        lolicon: false,
+        ranking: false,
+    };
+    try {
+        const res = await fetchWithTimeout(`${API_BASE}?num=1&r18=0&size=small`, 6000);
+        result.lolicon = !!res.ok;
+    }
+    catch {
+        result.lolicon = false;
+    }
+    try {
+        const res = await fetchWithTimeout(`${PIXIV_RANKING_API}?mode=daily&page=1`, 6000);
+        result.ranking = !!res.ok;
+    }
+    catch {
+        result.ranking = false;
+    }
+    return result;
 }
 /**
  * 获取 Pixiv 日榜数据。

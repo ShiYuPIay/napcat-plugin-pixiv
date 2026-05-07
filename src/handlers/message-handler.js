@@ -13,6 +13,7 @@ const pixiv_service_1 = require("../services/pixiv-service");
 // 匿名合并转发配置：使用系统账号头像，减少机器人身份暴露。
 const ANON_FORWARD_QQ = '10001';
 const ANON_FORWARD_NAME = '匿名用户';
+const userLastRequestAt = new Map();
 /**
  * 消息段构造函数：文本消息
  */
@@ -150,12 +151,12 @@ function buildForwardNode(illust, isGroup, botId) {
     const node = {
         type: 'node',
         data: {
-            nickname: isGroup ? ANON_FORWARD_NAME : 'PixivBot',
+            nickname: isGroup && state_1.pluginState.config.enableAnonymousForward ? ANON_FORWARD_NAME : 'PixivBot',
             content,
         },
     };
     // 群聊默认使用匿名头像；私聊保留机器人头像。
-    node.data.user_id = isGroup ? ANON_FORWARD_QQ : (botId || ANON_FORWARD_QQ);
+    node.data.user_id = isGroup && state_1.pluginState.config.enableAnonymousForward ? ANON_FORWARD_QQ : (botId || ANON_FORWARD_QQ);
     return node;
 }
 
@@ -178,6 +179,27 @@ function buildDailyRankingNode(illust, index) {
         },
     };
 }
+
+function parseBlockedKeywords(raw) {
+    if (typeof raw !== 'string') return [];
+    return raw.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+}
+function hitBlockedKeyword(text, blocked) {
+    const normalized = String(text || '').toLowerCase();
+    return blocked.find((k) => normalized.includes(k)) || '';
+}
+function checkRateLimit(event, seconds) {
+    const uid = String(event?.user_id || '0');
+    const now = Date.now();
+    const limitMs = Math.max(3, Number(seconds) || 15) * 1000;
+    const last = userLastRequestAt.get(uid) || 0;
+    if (now - last < limitMs) {
+        return Math.ceil((limitMs - (now - last)) / 1000);
+    }
+    userLastRequestAt.set(uid, now);
+    return 0;
+}
+
 /**
  * 主消息处理函数。当收到消息事件时由 plugin_onmessage 调用。
  * 判断是否匹配指令并执行搜索或推荐操作。
@@ -204,12 +226,25 @@ async function handleMessage(ctx, event) {
                 `${prefix}rec - 获取随机推荐插画`,
                 `${prefix}推荐 - 获取随机推荐插画`,
                 `${prefix}help - 显示本帮助`,
+                `${prefix}status - 检查接口连通性`,
+                `${prefix}合规 - 查看合规提示`,
             ];
             await sendReply(ctx, event, helpLines.join('\n'));
             return;
         }
         const normalizedCommand = commandText.replace(/\s+/g, '').toLowerCase();
         const normalizedRawMessage = rawMessage.replace(/\s+/g, '').toLowerCase();
+        const blocked = parseBlockedKeywords(state_1.pluginState.config.blockedKeywords);
+        const hit = hitBlockedKeyword(commandText, blocked);
+        if (hit) {
+            await sendReply(ctx, event, `请求已拒绝：命中安全拦截词「${hit}」。`);
+            return;
+        }
+        const waitSeconds = checkRateLimit(event, state_1.pluginState.config.rateLimitSeconds);
+        if (waitSeconds > 0) {
+            await sendReply(ctx, event, `请求过于频繁，请在 ${waitSeconds} 秒后重试。`);
+            return;
+        }
         // 处理帮助指令
         if (normalizedCommand === 'help' || normalizedCommand === '帮助') {
             const helpLines = [
@@ -218,8 +253,33 @@ async function handleMessage(ctx, event) {
                 `${prefix}rec - 获取随机推荐插画`,
                 `${prefix}推荐 - 获取随机推荐插画`,
                 `${prefix}help - 显示本帮助`,
+                `${prefix}status - 检查接口连通性`,
+                `${prefix}合规 - 查看合规提示`,
             ];
             await sendReply(ctx, event, helpLines.join('\n'));
+            return;
+        }
+        if (normalizedCommand === '合规' || normalizedCommand === 'compliance') {
+            await sendReply(ctx, event, [
+                '合规提示：',
+                '1) 禁止请求未成年人、暴力或违法内容；',
+                '2) 建议关闭匿名转发，保留审计轨迹；',
+                '3) 如被举报，请立即停用并导出日志排查。',
+            ].join('\n'));
+            return;
+        }
+        // 接口状态检查，便于部署后快速验收。
+        if (normalizedCommand === 'status' || normalizedCommand === '状态' || normalizedCommand === 'ping') {
+            const health = await (0, pixiv_service_1.checkApiHealth)();
+            const lines = [
+                'Pixiv 插件状态自检',
+                `Lolicon API: ${health.lolicon ? '✅ 可访问' : '❌ 不可访问'}`,
+                `Pixiv 日榜 API: ${health.ranking ? '✅ 可访问' : '❌ 不可访问'}`,
+                health.lolicon && health.ranking
+                    ? '总体状态：正常'
+                    : '总体状态：异常（请检查网络、代理或第三方 API 状态）',
+            ];
+            await sendReply(ctx, event, lines.join('\n'));
             return;
         }
         // Pixiv 日榜（兼容无前缀调用：!pixiv日榜）
@@ -264,6 +324,10 @@ async function handleMessage(ctx, event) {
                 }
             }
             const target = event.message_type === 'group' ? event.group_id : event.user_id;
+            if (state_1.pluginState.config.enableForward === false) {
+                for (const n of nodes) await sendReply(ctx, event, n.data.content);
+                return;
+            }
             await sendForwardMsg(ctx, target, event.message_type === 'group', nodes);
             return;
         }
@@ -287,11 +351,15 @@ async function handleMessage(ctx, event) {
                 await sendReply(ctx, event, segments);
                 return;
             }
-            // 多张图片，构建合并转发。显式传入机器人的 QQ 号用于隐藏触发者信息。
+            // 多张图片，构建合并转发。
             const botId = event.self_id ? String(event.self_id) : undefined;
             const isGroup = event.message_type === 'group';
             const nodes = illusts.map((i) => buildForwardNode(i, isGroup, botId));
             const target = isGroup ? event.group_id : event.user_id;
+            if (state_1.pluginState.config.enableForward === false) {
+                for (const n of nodes) await sendReply(ctx, event, n.data.content);
+                return;
+            }
             await sendForwardMsg(ctx, target, isGroup, nodes);
             return;
         }
@@ -312,11 +380,15 @@ async function handleMessage(ctx, event) {
             await sendReply(ctx, event, segments);
             return;
         }
-        // 多张图片，构建合并转发。显式传入机器人的 QQ 号用于隐藏触发者信息。
+        // 多张图片，构建合并转发。
         const botId2 = event.self_id ? String(event.self_id) : undefined;
         const isGroup = event.message_type === 'group';
         const nodes = illusts.map((i) => buildForwardNode(i, isGroup, botId2));
         const target = isGroup ? event.group_id : event.user_id;
+        if (state_1.pluginState.config.enableForward === false) {
+            for (const n of nodes) await sendReply(ctx, event, n.data.content);
+            return;
+        }
         await sendForwardMsg(ctx, target, isGroup, nodes);
     }
     catch (err) {
