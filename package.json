@@ -42,7 +42,9 @@
         "maxResults": {
           "type": "integer",
           "default": 3,
-          "description": "每次搜索或推荐返回的最大图片数量"
+          "description": "每次搜索或推荐返回的最大图片数量",
+          "minimum": 1,
+          "maximum": 10
         },
         "allowR18": {
           "type": "boolean",

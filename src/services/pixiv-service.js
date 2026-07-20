@@ -63,7 +63,7 @@ async function isImageUrlAvailable(url) {
     if (!url)
         return false;
     try {
-        const headRes = await fetchWithTimeout(url, 5000, { method: 'HEAD' });
+        const headRes = await fetchWithTimeout(url, 3000, { method: 'HEAD' });
         if (headRes.ok)
             return true;
     }
@@ -71,7 +71,7 @@ async function isImageUrlAvailable(url) {
         // 某些 CDN 不支持 HEAD，继续尝试 GET 探测。
     }
     try {
-        const getRes = await fetchWithTimeout(url, 7000, {
+        const getRes = await fetchWithTimeout(url, 4000, {
             method: 'GET',
             headers: { Range: 'bytes=0-0' },
         });
@@ -99,22 +99,21 @@ async function fetchIllusts(params) {
             throw new Error(`HTTP ${res.status}`);
         const json = (await res.json());
         const data = (json === null || json === void 0 ? void 0 : json.data) || [];
-        const illusts = [];
-        for (const item of data) {
+        const checked = await Promise.all(data.map(async (item) => {
             const pickedUrl = pickImageUrl(item.urls);
             if (!(await isImageUrlAvailable(pickedUrl))) {
-                continue;
+                return null;
             }
-            illusts.push({
+            return {
                 pid: item.pid,
                 title: item.title,
                 author: item.author,
                 tags: item.tags || [],
                 url: pickedUrl,
                 r18: Boolean(item.r18),
-            });
-        }
-        return illusts;
+            };
+        }));
+        return checked.filter(Boolean);
     }
     catch (err) {
         console.warn('请求插画接口失败', err);
@@ -182,7 +181,7 @@ async function checkApiHealth() {
  * 说明：该能力依赖第三方聚合接口，可能会因网络或服务端限流而返回空数组。
  * 返回结构会尽量兼容消息处理层所需字段。
  */
-async function fetchDailyRanking(num = 10) {
+async function fetchDailyRanking(num = 10, allowR18 = false) {
     try {
         const limit = Math.min(30, Math.max(1, Number(num) || 10));
         const sp = new URLSearchParams({ mode: 'daily', page: '1' });
@@ -195,18 +194,20 @@ async function fetchDailyRanking(num = 10) {
             : Array.isArray(json === null || json === void 0 ? void 0 : json.data)
                 ? json.data
                 : [];
-        const result = [];
-        for (const item of list.slice(0, limit)) {
+        const checked = await Promise.all(list.slice(0, limit).map(async (item, index) => {
             var _a;
+            const isR18 = Boolean((item === null || item === void 0 ? void 0 : item.r18) || Number(item === null || item === void 0 ? void 0 : item.xRestrict) > 0 || Number(item === null || item === void 0 ? void 0 : item.restrict) > 0);
+            if (isR18 && !allowR18)
+                return null;
             const id = Number(item === null || item === void 0 ? void 0 : item.id) || Number(item === null || item === void 0 ? void 0 : item.pid) || 0;
             const imageUrl = (typeof (item === null || item === void 0 ? void 0 : item.proxyUrl) === 'string' && item.proxyUrl)
                 || (typeof (item === null || item === void 0 ? void 0 : item.url) === 'string' && item.url)
                 || pickImageUrl(item === null || item === void 0 ? void 0 : item.urls);
             if (!(await isImageUrlAvailable(imageUrl)))
-                continue;
-            result.push({
+                return null;
+            return {
                 id,
-                title: String((item === null || item === void 0 ? void 0 : item.title) || `作品 ${id || result.length + 1}`),
+                title: String((item === null || item === void 0 ? void 0 : item.title) || `作品 ${id || index + 1}`),
                 author: String(((_a = item === null || item === void 0 ? void 0 : item.user) === null || _a === void 0 ? void 0 : _a.name) || (item === null || item === void 0 ? void 0 : item.author) || '未知画师'),
                 bookmarks: Number((item === null || item === void 0 ? void 0 : item.totalBookmarks) || (item === null || item === void 0 ? void 0 : item.bookmarks) || 0),
                 tags: Array.isArray(item === null || item === void 0 ? void 0 : item.tags)
@@ -215,9 +216,10 @@ async function fetchDailyRanking(num = 10) {
                         .filter(Boolean)
                     : [],
                 proxyUrl: imageUrl,
-            });
-        }
-        return result;
+                r18: isR18,
+            };
+        }));
+        return checked.filter(Boolean);
     }
     catch (err) {
         console.warn('获取 Pixiv 日榜失败', err);
