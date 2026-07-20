@@ -17,7 +17,7 @@
     "illustration"
   ],
   "author": "希儿 (shiYuPIay)",
-  "license": "AGPL-3.0-license",
+  "license": "AGPL-3.0-only",
   "dependencies": {
     "undici": "^6.0.0"
   },
@@ -53,6 +53,28 @@
           "type": "boolean",
           "default": true,
           "description": "是否启用 Pixiv 搜索与推荐功能"
+        },
+        "enableForward": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否优先使用合并转发发送多图结果"
+        },
+        "enableAnonymousForward": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否使用匿名昵称发送转发节点"
+        },
+        "rateLimitSeconds": {
+          "type": "integer",
+          "default": 15,
+          "minimum": 3,
+          "maximum": 300,
+          "description": "同一用户再次调用指令的最小间隔秒数"
+        },
+        "blockedKeywords": {
+          "type": "string",
+          "default": "萝莉,未成年,幼女,乱伦,强奸",
+          "description": "逗号分隔的拦截关键词，命中后拒绝请求"
         }
       }
     }
