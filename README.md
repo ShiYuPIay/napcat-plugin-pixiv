@@ -41,6 +41,10 @@ npm run build
 | `commandPrefix` | `#pixiv` | 指令前缀 |
 | `maxResults` | `3` | 单次返回的最大图片数量 |
 | `allowR18` | `false` | 是否允许返回 R18 插画 |
+| `enableForward` | `true` | 是否优先使用合并转发发送多图结果 |
+| `enableAnonymousForward` | `false` | 是否使用匿名昵称发送转发节点 |
+| `rateLimitSeconds` | `15` | 同一用户再次调用指令的最小间隔 |
+| `blockedKeywords` | `萝莉,未成年,幼女,乱伦,强奸` | 逗号分隔的拦截关键词 |
 
 ## 使用示例
 

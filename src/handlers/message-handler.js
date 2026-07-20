@@ -215,9 +215,11 @@ async function handleMessage(ctx, event) {
         if (!rawMessage)
             return;
         const prefix = state_1.pluginState.config.commandPrefix || '#pixiv';
-        if (!rawMessage.startsWith(prefix))
+        const normalizedRawMessage = rawMessage.replace(/\s+/g, '').toLowerCase();
+        const isLegacyDailyCommand = normalizedRawMessage === '!pixiv日榜';
+        if (!rawMessage.startsWith(prefix) && !isLegacyDailyCommand)
             return;
-        const commandText = rawMessage.slice(prefix.length).trim();
+        const commandText = isLegacyDailyCommand ? '日榜' : rawMessage.slice(prefix.length).trim();
         // 如果没有参数，发送帮助
         if (!commandText) {
             const helpLines = [
@@ -225,6 +227,7 @@ async function handleMessage(ctx, event) {
                 `${prefix}<关键词> - 搜索含有关键词的插画`,
                 `${prefix}rec - 获取随机推荐插画`,
                 `${prefix}推荐 - 获取随机推荐插画`,
+                `${prefix}日榜 - 获取 Pixiv 日榜 Top10`,
                 `${prefix}help - 显示本帮助`,
                 `${prefix}status - 检查接口连通性`,
                 `${prefix}合规 - 查看合规提示`,
@@ -233,18 +236,6 @@ async function handleMessage(ctx, event) {
             return;
         }
         const normalizedCommand = commandText.replace(/\s+/g, '').toLowerCase();
-        const normalizedRawMessage = rawMessage.replace(/\s+/g, '').toLowerCase();
-        const blocked = parseBlockedKeywords(state_1.pluginState.config.blockedKeywords);
-        const hit = hitBlockedKeyword(commandText, blocked);
-        if (hit) {
-            await sendReply(ctx, event, `请求已拒绝：命中安全拦截词「${hit}」。`);
-            return;
-        }
-        const waitSeconds = checkRateLimit(event, state_1.pluginState.config.rateLimitSeconds);
-        if (waitSeconds > 0) {
-            await sendReply(ctx, event, `请求过于频繁，请在 ${waitSeconds} 秒后重试。`);
-            return;
-        }
         // 处理帮助指令
         if (normalizedCommand === 'help' || normalizedCommand === '帮助') {
             const helpLines = [
@@ -252,6 +243,7 @@ async function handleMessage(ctx, event) {
                 `${prefix}<关键词> - 搜索含有关键词的插画`,
                 `${prefix}rec - 获取随机推荐插画`,
                 `${prefix}推荐 - 获取随机推荐插画`,
+                `${prefix}日榜 - 获取 Pixiv 日榜 Top10`,
                 `${prefix}help - 显示本帮助`,
                 `${prefix}status - 检查接口连通性`,
                 `${prefix}合规 - 查看合规提示`,
@@ -280,6 +272,17 @@ async function handleMessage(ctx, event) {
                     : '总体状态：异常（请检查网络、代理或第三方 API 状态）',
             ];
             await sendReply(ctx, event, lines.join('\n'));
+            return;
+        }
+        const blocked = parseBlockedKeywords(state_1.pluginState.config.blockedKeywords);
+        const hit = hitBlockedKeyword(commandText, blocked);
+        if (hit) {
+            await sendReply(ctx, event, `请求已拒绝：命中安全拦截词「${hit}」。`);
+            return;
+        }
+        const waitSeconds = checkRateLimit(event, state_1.pluginState.config.rateLimitSeconds);
+        if (waitSeconds > 0) {
+            await sendReply(ctx, event, `请求过于频繁，请在 ${waitSeconds} 秒后重试。`);
             return;
         }
         // Pixiv 日榜（兼容无前缀调用：!pixiv日榜）
