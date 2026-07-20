@@ -180,11 +180,41 @@ function buildDailyRankingNode(illust, index) {
 function parseBlockedKeywords(raw) {
     if (typeof raw !== 'string')
         return [];
-    return raw.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+    return raw.split(/[，,]/).map((x) => x.trim().toLowerCase()).filter(Boolean);
 }
 function hitBlockedKeyword(text, blocked) {
-    const normalized = String(text || '').toLowerCase();
-    return blocked.find((k) => normalized.includes(k)) || '';
+    const normalized = String(text || '').replace(/\s+/g, '').toLowerCase();
+    return blocked.find((k) => normalized.includes(k.replace(/\s+/g, ''))) || '';
+}
+function getIllustSafetyText(illust) {
+    return [illust === null || illust === void 0 ? void 0 : illust.title, illust === null || illust === void 0 ? void 0 : illust.author, ...(Array.isArray(illust === null || illust === void 0 ? void 0 : illust.tags) ? illust.tags : [])].join(' ');
+}
+function filterBlockedIllusts(illusts, blocked) {
+    if (!blocked.length)
+        return illusts;
+    return illusts.filter((illust) => !hitBlockedKeyword(getIllustSafetyText(illust), blocked));
+}
+async function sendNodesAsPlainReplies(ctx, event, nodes) {
+    let sent = false;
+    for (const n of nodes) {
+        sent = (await sendReply(ctx, event, n.data.content)) || sent;
+    }
+    return sent;
+}
+async function sendNodesWithFallback(ctx, event, target, isGroup, nodes) {
+    var _e, _f;
+    if (state_1.pluginState.config.enableForward === false) {
+        return sendNodesAsPlainReplies(ctx, event, nodes);
+    }
+    const forwarded = await sendForwardMsg(ctx, target, isGroup, nodes);
+    if (forwarded)
+        return true;
+    (_f = (_e = state_1.pluginState.logger).warn) === null || _f === void 0 ? void 0 : _f.call(_e, '合并转发失败，回退为普通消息逐条发送');
+    const plainSent = await sendNodesAsPlainReplies(ctx, event, nodes);
+    if (!plainSent) {
+        await sendReply(ctx, event, '发送 Pixiv 结果失败，请稍后重试或关闭合并转发后再试。');
+    }
+    return plainSent;
 }
 function checkRateLimit(event, seconds) {
     const uid = String((event === null || event === void 0 ? void 0 : event.user_id) || '0');
@@ -284,52 +314,17 @@ async function handleMessage(ctx, event) {
         }
         // Pixiv 日榜（兼容无前缀调用：!pixiv日榜）
         if (normalizedRawMessage === '!pixiv日榜' || normalizedCommand === '日榜' || normalizedCommand === 'daily') {
-            const rankings = await (0, pixiv_service_1.fetchDailyRanking)(10);
+            const allowR18Config = Boolean(state_1.pluginState.config.allowR18);
+            const allowR18 = event.message_type === 'private' ? allowR18Config : false;
+            const rankings = filterBlockedIllusts(await (0, pixiv_service_1.fetchDailyRanking)(10, allowR18), blocked);
             if (rankings.length === 0) {
                 await sendReply(ctx, event, '暂时无法获取 Pixiv 日榜，请稍后再试。');
                 return;
             }
             const nodes = rankings.map((illust, i) => buildDailyRankingNode(illust, i));
             const isGroup = event.message_type === 'group';
-            if (isGroup) {
-                try {
-                    await ctx.actions.call('send_group_forward_msg', {
-                        group_id: String(event.group_id),
-                        messages: nodes,
-                        news: rankings.slice(0, 3).map((illust, i) => ({ text: `🏆 #${i + 1}: ${illust.title} (${illust.bookmarks} ❤️)` })),
-                        prompt: '[Pixiv日榜Top10]',
-                        summary: `查看${rankings.length}张今日排行插画`,
-                        source: 'Pixiv Daily Ranking',
-                    }, ctx.adapterName, ctx.pluginManager.config);
-                    return;
-                }
-                catch (e) {
-                    var _a;
-                    (_a = state_1.pluginState.logger.warn) === null || _a === void 0 ? void 0 : _a.call(state_1.pluginState.logger, '发送群日榜转发失败，尝试通用接口:', e);
-                }
-                try {
-                    await ctx.actions.call('send_forward_msg', {
-                        group_id: String(event.group_id),
-                        messages: nodes,
-                        news: rankings.slice(0, 3).map((illust, i) => ({ text: `🏆 #${i + 1}: ${illust.title} (${illust.bookmarks} ❤️)` })),
-                        prompt: '[Pixiv日榜Top10]',
-                        summary: `查看${rankings.length}张今日排行插画`,
-                        source: 'Pixiv Daily Ranking',
-                    }, ctx.adapterName, ctx.pluginManager.config);
-                    return;
-                }
-                catch (e2) {
-                    var _b;
-                    (_b = state_1.pluginState.logger.warn) === null || _b === void 0 ? void 0 : _b.call(state_1.pluginState.logger, 'send_forward_msg 发送日榜失败，回退普通转发:', e2);
-                }
-            }
-            const target = event.message_type === 'group' ? event.group_id : event.user_id;
-            if (state_1.pluginState.config.enableForward === false) {
-                for (const n of nodes)
-                    await sendReply(ctx, event, n.data.content);
-                return;
-            }
-            await sendForwardMsg(ctx, target, event.message_type === 'group', nodes);
+            const target = isGroup ? event.group_id : event.user_id;
+            await sendNodesWithFallback(ctx, event, target, isGroup, nodes);
             return;
         }
         const maxResults = Math.min(10, Math.max(1, Number(state_1.pluginState.config.maxResults) || 3));
@@ -337,7 +332,7 @@ async function handleMessage(ctx, event) {
         const allowR18 = event.message_type === 'private' ? allowR18Config : false;
         // 推荐指令
         if (normalizedCommand === 'rec' || normalizedCommand === '推荐') {
-            const illusts = await (0, pixiv_service_1.recommendIllusts)(maxResults, allowR18);
+            const illusts = filterBlockedIllusts(await (0, pixiv_service_1.recommendIllusts)(maxResults, allowR18), blocked);
             if (illusts.length === 0) {
                 await sendReply(ctx, event, '未找到推荐插画，请稍后再试。');
                 return;
@@ -357,17 +352,12 @@ async function handleMessage(ctx, event) {
             const isGroup = event.message_type === 'group';
             const nodes = illusts.map((i) => buildForwardNode(i, isGroup, botId));
             const target = isGroup ? event.group_id : event.user_id;
-            if (state_1.pluginState.config.enableForward === false) {
-                for (const n of nodes)
-                    await sendReply(ctx, event, n.data.content);
-                return;
-            }
-            await sendForwardMsg(ctx, target, isGroup, nodes);
+            await sendNodesWithFallback(ctx, event, target, isGroup, nodes);
             return;
         }
         // 默认认为剩余参数是搜索关键字
         const query = commandText;
-        const illusts = await (0, pixiv_service_1.searchIllusts)(query, maxResults, allowR18);
+        const illusts = filterBlockedIllusts(await (0, pixiv_service_1.searchIllusts)(query, maxResults, allowR18), blocked);
         if (illusts.length === 0) {
             await sendReply(ctx, event, `未找到与 “${query}” 相关的插画。`);
             return;
@@ -387,12 +377,7 @@ async function handleMessage(ctx, event) {
         const isGroup = event.message_type === 'group';
         const nodes = illusts.map((i) => buildForwardNode(i, isGroup, botId2));
         const target = isGroup ? event.group_id : event.user_id;
-        if (state_1.pluginState.config.enableForward === false) {
-            for (const n of nodes)
-                await sendReply(ctx, event, n.data.content);
-            return;
-        }
-        await sendForwardMsg(ctx, target, isGroup, nodes);
+        await sendNodesWithFallback(ctx, event, target, isGroup, nodes);
     }
     catch (err) {
         state_1.pluginState.logger.error('处理消息时出错:', err);
