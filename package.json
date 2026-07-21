@@ -1,84 +1,9 @@
 {
   "name": "napcat-plugin-pixiv",
   "version": "0.1.0",
-  "plugin": "Pixiv 搜索与推荐",
-  "description": "使用第三方 API 搜索与推荐 Pixiv 插画的 NapCat 插件，支持合并转发多张图片。",
+  "type": "module",
+  "description": "NapCat Pixiv 图片推荐与排行插件",
   "main": "dist/index.js",
-  "scripts": {
-    "build": "tsc",
-    "watch": "tsc -w",
-    "prepare": "npm run build"
-  },
-  "keywords": [
-    "napcat",
-    "pixiv",
-    "插件",
-    "setu",
-    "illustration"
-  ],
-  "author": "希儿 (shiYuPIay)",
-  "license": "AGPL-3.0-only",
-  "dependencies": {
-    "undici": "^6.0.0"
-  },
-  "devDependencies": {
-    "typescript": "^5.3.3"
-  },
-  "napcat": {
-    "minVersion": "4.14.0",
-    "tags": [
-      "图片",
-      "搜索",
-      "娱乐"
-    ],
-    "configSchema": {
-      "type": "object",
-      "properties": {
-        "commandPrefix": {
-          "type": "string",
-          "default": "#pixiv",
-          "description": "调用插件的指令前缀，例如 #pixiv"
-        },
-        "maxResults": {
-          "type": "integer",
-          "default": 3,
-          "description": "每次搜索或推荐返回的最大图片数量",
-          "minimum": 1,
-          "maximum": 10
-        },
-        "allowR18": {
-          "type": "boolean",
-          "default": false,
-          "description": "是否允许返回 R18 插画，默认为否"
-        },
-        "enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "是否启用 Pixiv 搜索与推荐功能"
-        },
-        "enableForward": {
-          "type": "boolean",
-          "default": true,
-          "description": "是否优先使用合并转发发送多图结果"
-        },
-        "enableAnonymousForward": {
-          "type": "boolean",
-          "default": false,
-          "description": "是否使用匿名昵称发送转发节点"
-        },
-        "rateLimitSeconds": {
-          "type": "integer",
-          "default": 15,
-          "minimum": 3,
-          "maximum": 300,
-          "description": "同一用户再次调用指令的最小间隔秒数"
-        },
-        "blockedKeywords": {
-          "type": "string",
-          "default": "萝莉,未成年,幼女,乱伦,强奸",
-          "description": "逗号分隔的拦截关键词，命中后拒绝请求"
-        }
-      }
-    }
-  }
+  "license": "MIT",
+  "engines": { "node": ">=18" }
 }
