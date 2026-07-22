@@ -4,6 +4,6 @@
   "type": "module",
   "description": "NapCat Pixiv 图片推荐与排行插件",
   "main": "dist/index.js",
-  "license": "MIT",
-  "engines": { "node": ">=18" }
+  "license": "GNU Affero General Public License v3.0",
+  "engines": { "node": ">=22" }
 }
