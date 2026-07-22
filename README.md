@@ -28,8 +28,8 @@
 将本仓库放入 NapCat 插件目录，在管理后台启用即可，**无需安装依赖或执行构建**。
 
 ```
-plugins/
-└── napcat-plugin-pixiv/   ← 放这里
+plugins/         ← 放这里
+└── napcat-plugin-pixiv/   
     ├── dist/
     └── package.json
 ```
