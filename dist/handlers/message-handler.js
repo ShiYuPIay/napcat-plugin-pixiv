@@ -1,385 +1,96 @@
-/**
- * Author: 希儿 (shiYuPIay)
- * SPDX-License-Identifier: AGPL-3.0-only
- */
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.handleMessage = handleMessage;
-// 定义消息事件类型常量，OneBot 规范中消息事件的 post_type 为 'message'。
-const MESSAGE_POST_TYPE = 'message';
-const state_1 = require("../core/state");
-const pixiv_service_1 = require("../services/pixiv-service");
-// 匿名合并转发配置：使用系统账号头像，减少机器人身份暴露。
-const ANON_FORWARD_QQ = '10001';
-const ANON_FORWARD_NAME = '匿名用户';
-const userLastRequestAt = new Map();
-/**
- * 消息段构造函数：文本消息
- */
-function textSegment(text) {
-    return { type: 'text', data: { text } };
+import { fetchRecommend, fetchRanking } from '../services/pixiv-service.js';
+import { CMD } from '../config.js';
+
+const TAG   = '[Plugin: napcat-plugin-pixiv]';
+const info  = m => console.log(`\x1b[30m[INFO] ${TAG} ${m}\x1b[0m`);
+const warn  = m => console.warn(`\x1b[33m[WARN] ${TAG} ${m}\x1b[0m`);
+const error = m => console.error(`\x1b[31m[ERROR] ${TAG} ${m}\x1b[0m`);
+
+// Build one OB11 forward node for an artwork
+function buildNode({ pid, title, author, url }) {
+  const caption = `${title} - ${author}\npid: ${pid}`;
+  const content = [{ type: 'text', data: { text: caption } }];
+  if (url) content.push({ type: 'image', data: { file: url } });
+  return { type: 'node', data: { name: author || 'Pixiv', uin: '10000', content } };
 }
-/**
- * 消息段构造函数：图片消息
- * NapCat 支持通过网络链接发送图片，需填写 file 字段。
- */
-function imageSegment(url) {
-    return { type: 'image', data: { file: url } };
+
+// ── Lowest-level send primitives ──────────────────────────────────────────────
+
+// FIX: single forward attempt (was 4 retries with different API variants,
+// all of which fail identically when QQ's forward-message CDN is unreachable)
+async function tryForwardMsg(bot, groupId, nodes) {
+  try {
+    await bot.call_api('send_group_forward_msg', { group_id: groupId, messages: nodes });
+    return true;
+  } catch (e) {
+    warn(`send_group_forward_msg 失败，回退逐条发送: ${e.message}`);
+    return false;
+  }
 }
-/**
- * 尽量从事件中提取纯文本内容，兼容不同 OneBot 实现（raw_message 可能为空）。
- */
-function getPlainText(event) {
-    var _a, _b, _c, _d;
-    if (typeof (event === null || event === void 0 ? void 0 : event.raw_message) === 'string' && event.raw_message.trim()) {
-        return event.raw_message.trim();
+
+// FIX: use send_group_msg (no reply reference) instead of send_msg with a
+// reply element.  The old sendReply() triggered NTEvent onMsgInfoListUpdate
+// which timed out even when result=0 (messages were already delivered).
+// send_group_msg avoids that callback path entirely.
+//
+// FIX: when image upload fails (Highway ETIMEDOUT) degrade to text-only so
+// the user always receives the title + pid instead of nothing.
+async function sendOneNode(bot, groupId, node) {
+  const content = node.data?.content ?? [];
+  const hasImg  = content.some(c => c.type === 'image');
+
+  try {
+    await bot.call_api('send_group_msg', { group_id: groupId, message: content });
+  } catch (e) {
+    if (hasImg) {
+      warn(`图片上传失败，降级文字: ${e.message}`);
+      const textOnly = content.filter(c => c.type === 'text');
+      try {
+        await bot.call_api('send_group_msg', { group_id: groupId, message: textOnly });
+      } catch (e2) {
+        error(`文字降级也失败: ${e2.message}`);
+      }
+    } else {
+      error(`发送失败: ${e.message}`);
     }
-    const msg = event === null || event === void 0 ? void 0 : event.message;
-    if (typeof msg === 'string')
-        return msg.trim();
-    if (Array.isArray(msg)) {
-        return msg
-            .map((seg) => {
-            var _a, _b;
-            if (!seg)
-                return '';
-            if (typeof seg === 'string')
-                return seg;
-            if (seg.type === 'text')
-                return String((_b = (_a = seg.data) === null || _a === void 0 ? void 0 : _a.text) !== null && _b !== void 0 ? _b : '');
-            return '';
-        })
-            .join('')
-            .trim();
-    }
-    return '';
+  }
 }
-/**
- * 根据事件发送回复。自动处理群聊和私聊。
- */
-async function sendReply(ctx, event, message) {
-    try {
-        const params = {
-            message,
-            message_type: event.message_type,
-            ...(event.message_type === 'group' && event.group_id
-                ? { group_id: String(event.group_id) }
-                : {}),
-            ...(event.message_type === 'private' && event.user_id
-                ? { user_id: String(event.user_id) }
-                : {}),
-        };
-        await ctx.actions.call('send_msg', params, ctx.adapterName, ctx.pluginManager.config);
-        return true;
-    }
-    catch (err) {
-        state_1.pluginState.logger.error('发送回复失败:', err);
-        return false;
-    }
+
+// ── Merged dispatch: forward once → one-by-one ───────────────────────────────
+
+async function sendNodes(bot, groupId, nodes) {
+  const ok = await tryForwardMsg(bot, groupId, nodes);
+  if (ok) return;
+  for (const node of nodes) {
+    await sendOneNode(bot, groupId, node);
+  }
 }
-/**
- * 发送合并转发消息。将多条消息合并为一条可展开查看的聊天记录，避免刷屏。
- */
-async function sendForwardMsg(ctx, target, isGroup, nodes) {
-    if (isGroup) {
-        // 增加轻微随机延迟，尽量降低风控触发概率。
-        await new Promise((resolve) => setTimeout(resolve, 1000 + Math.random() * 2000));
-        // 群聊优先使用 send_group_forward_msg，并设置扩展字段优化卡片展示。
-        try {
-            await ctx.actions.call('send_group_forward_msg', {
-                group_id: String(target),
-                messages: nodes,
-                prompt: '[Pixiv推送]',
-                summary: `查看${nodes.length}条插画`,
-                source: 'Pixiv',
-                news: nodes.slice(0, 4).map((_, i) => ({ text: `${ANON_FORWARD_NAME}: 作品 ${i + 1}` })),
-            }, ctx.adapterName, ctx.pluginManager.config);
-            return true;
-        }
-        catch (e1) {
-            var _a;
-            (_a = state_1.pluginState.logger.warn) === null || _a === void 0 ? void 0 : _a.call(state_1.pluginState.logger, 'send_group_forward_msg 发送失败，尝试兼容接口回退:', e1);
-        }
-        // 兼容实现：部分服务端仅支持 send_forward_msg。
-        try {
-            await ctx.actions.call('send_forward_msg', {
-                group_id: String(target),
-                messages: nodes,
-                prompt: '[Pixiv推送]',
-                summary: `查看${nodes.length}条插画`,
-                source: 'Pixiv',
-            }, ctx.adapterName, ctx.pluginManager.config);
-            return true;
-        }
-        catch (e2) {
-            var _b;
-            (_b = state_1.pluginState.logger.warn) === null || _b === void 0 ? void 0 : _b.call(state_1.pluginState.logger, 'send_forward_msg 发送失败，继续尝试标准接口:', e2);
-        }
-    }
-    const actionName = isGroup ? 'send_group_forward_msg' : 'send_private_forward_msg';
-    const base = isGroup ? { group_id: String(target) } : { user_id: String(target) };
-    // 兼容不同 OneBot 实现：优先 messages，失败回退 message。
-    try {
-        await ctx.actions.call(actionName, { ...base, messages: nodes }, ctx.adapterName, ctx.pluginManager.config);
-        return true;
-    }
-    catch (e3) {
-        var _c;
-        (_c = state_1.pluginState.logger.warn) === null || _c === void 0 ? void 0 : _c.call(state_1.pluginState.logger, '合并转发参数 messages 失败，尝试 message 回退:', e3);
-    }
-    try {
-        await ctx.actions.call(actionName, { ...base, message: nodes }, ctx.adapterName, ctx.pluginManager.config);
-        return true;
-    }
-    catch (e4) {
-        state_1.pluginState.logger.error('发送合并转发失败:', e4);
-        return false;
-    }
+
+// ── Command handlers ──────────────────────────────────────────────────────────
+
+async function handleRecommend(bot, groupId) {
+  const illusts = await fetchRecommend();
+  await sendNodes(bot, groupId, illusts.map(buildNode));
 }
-/**
- * 创建一个合并转发节点，用于展示单条插画信息。
- */
-function buildForwardNode(illust, isGroup, botId) {
-    // 构造插画标题与标签信息
-    const titleLine = `${illust.title} - ${illust.author}`;
-    const tagLine = illust.tags.length > 0 ? `标签: ${illust.tags.join(', ')}` : '';
-    const content = [
-        textSegment(`${titleLine}\n${tagLine}\n`),
-        imageSegment(illust.url),
-    ];
-    const node = {
-        type: 'node',
-        data: {
-            nickname: isGroup && state_1.pluginState.config.enableAnonymousForward ? ANON_FORWARD_NAME : 'PixivBot',
-            content,
-        },
-    };
-    // 群聊默认使用匿名头像；私聊保留机器人头像。
-    node.data.user_id = isGroup && state_1.pluginState.config.enableAnonymousForward ? ANON_FORWARD_QQ : (botId || ANON_FORWARD_QQ);
-    return node;
+
+async function handleRanking(bot, groupId, mode) {
+  const illusts = await fetchRanking(mode);
+  await sendNodes(bot, groupId, illusts.map(buildNode));
 }
-/**
- * 创建日榜合并转发节点。
- */
-function buildDailyRankingNode(illust, index) {
-    const safeTags = Array.isArray(illust.tags) && illust.tags.length > 0
-        ? illust.tags.join(', ')
-        : '无';
-    return {
-        type: 'node',
-        data: {
-            user_id: ANON_FORWARD_QQ,
-            nickname: `#${index + 1} ${illust.title}`,
-            content: [
-                imageSegment(illust.proxyUrl),
-                textSegment(`${illust.title}\n画师: ${illust.author}\nPID: ${illust.id} | ❤️ ${illust.bookmarks}\nTags: ${safeTags}`),
-            ],
-        },
-    };
-}
-function parseBlockedKeywords(raw) {
-    if (typeof raw !== 'string')
-        return [];
-    return raw.split(/[，,]/).map((x) => x.trim().toLowerCase()).filter(Boolean);
-}
-function hitBlockedKeyword(text, blocked) {
-    const normalized = String(text || '').replace(/\s+/g, '').toLowerCase();
-    return blocked.find((k) => normalized.includes(k.replace(/\s+/g, ''))) || '';
-}
-function getIllustSafetyText(illust) {
-    return [illust === null || illust === void 0 ? void 0 : illust.title, illust === null || illust === void 0 ? void 0 : illust.author, ...(Array.isArray(illust === null || illust === void 0 ? void 0 : illust.tags) ? illust.tags : [])].join(' ');
-}
-function filterBlockedIllusts(illusts, blocked) {
-    if (!blocked.length)
-        return illusts;
-    return illusts.filter((illust) => !hitBlockedKeyword(getIllustSafetyText(illust), blocked));
-}
-async function sendNodesAsPlainReplies(ctx, event, nodes) {
-    let sent = false;
-    for (const n of nodes) {
-        sent = (await sendReply(ctx, event, n.data.content)) || sent;
-    }
-    return sent;
-}
-async function sendNodesWithFallback(ctx, event, target, isGroup, nodes) {
-    var _e, _f;
-    if (state_1.pluginState.config.enableForward === false) {
-        return sendNodesAsPlainReplies(ctx, event, nodes);
-    }
-    const forwarded = await sendForwardMsg(ctx, target, isGroup, nodes);
-    if (forwarded)
-        return true;
-    (_f = (_e = state_1.pluginState.logger).warn) === null || _f === void 0 ? void 0 : _f.call(_e, '合并转发失败，回退为普通消息逐条发送');
-    const plainSent = await sendNodesAsPlainReplies(ctx, event, nodes);
-    if (!plainSent) {
-        await sendReply(ctx, event, '发送 Pixiv 结果失败，请稍后重试或关闭合并转发后再试。');
-    }
-    return plainSent;
-}
-function checkRateLimit(event, seconds) {
-    const uid = String((event === null || event === void 0 ? void 0 : event.user_id) || '0');
-    const now = Date.now();
-    const limitMs = Math.max(3, Number(seconds) || 15) * 1000;
-    const last = userLastRequestAt.get(uid) || 0;
-    if (now - last < limitMs) {
-        return Math.ceil((limitMs - (now - last)) / 1000);
-    }
-    userLastRequestAt.set(uid, now);
-    return 0;
-}
-/**
- * 主消息处理函数。当收到消息事件时由 plugin_onmessage 调用。
- * 判断是否匹配指令并执行搜索或推荐操作。
- */
-async function handleMessage(ctx, event) {
-    try {
-        // 仅处理消息事件
-        if (event.post_type !== MESSAGE_POST_TYPE)
-            return;
-        if (!state_1.pluginState.config.enabled)
-            return;
-        const rawMessage = getPlainText(event);
-        if (!rawMessage)
-            return;
-        const prefix = state_1.pluginState.config.commandPrefix || '#pixiv';
-        const normalizedRawMessage = rawMessage.replace(/\s+/g, '').toLowerCase();
-        const isLegacyDailyCommand = normalizedRawMessage === '!pixiv日榜';
-        if (!rawMessage.startsWith(prefix) && !isLegacyDailyCommand)
-            return;
-        const commandText = isLegacyDailyCommand ? '日榜' : rawMessage.slice(prefix.length).trim();
-        // 如果没有参数，发送帮助
-        if (!commandText) {
-            const helpLines = [
-                'Pixiv 插件帮助',
-                `${prefix}<关键词> - 搜索含有关键词的插画`,
-                `${prefix}rec - 获取随机推荐插画`,
-                `${prefix}推荐 - 获取随机推荐插画`,
-                `${prefix}日榜 - 获取 Pixiv 日榜 Top10`,
-                `${prefix}help - 显示本帮助`,
-                `${prefix}status - 检查接口连通性`,
-                `${prefix}合规 - 查看合规提示`,
-            ];
-            await sendReply(ctx, event, helpLines.join('\n'));
-            return;
-        }
-        const normalizedCommand = commandText.replace(/\s+/g, '').toLowerCase();
-        // 处理帮助指令
-        if (normalizedCommand === 'help' || normalizedCommand === '帮助') {
-            const helpLines = [
-                'Pixiv 插件帮助',
-                `${prefix}<关键词> - 搜索含有关键词的插画`,
-                `${prefix}rec - 获取随机推荐插画`,
-                `${prefix}推荐 - 获取随机推荐插画`,
-                `${prefix}日榜 - 获取 Pixiv 日榜 Top10`,
-                `${prefix}help - 显示本帮助`,
-                `${prefix}status - 检查接口连通性`,
-                `${prefix}合规 - 查看合规提示`,
-            ];
-            await sendReply(ctx, event, helpLines.join('\n'));
-            return;
-        }
-        if (normalizedCommand === '合规' || normalizedCommand === 'compliance') {
-            await sendReply(ctx, event, [
-                '合规提示：',
-                '1) 禁止请求未成年人、暴力或违法内容；',
-                '2) 建议关闭匿名转发，保留审计轨迹；',
-                '3) 如被举报，请立即停用并导出日志排查。',
-            ].join('\n'));
-            return;
-        }
-        // 接口状态检查，便于部署后快速验收。
-        if (normalizedCommand === 'status' || normalizedCommand === '状态' || normalizedCommand === 'ping') {
-            const health = await (0, pixiv_service_1.checkApiHealth)();
-            const lines = [
-                'Pixiv 插件状态自检',
-                `Lolicon API: ${health.lolicon ? '✅ 可访问' : '❌ 不可访问'}`,
-                `Pixiv 日榜 API: ${health.ranking ? '✅ 可访问' : '❌ 不可访问'}`,
-                health.lolicon && health.ranking
-                    ? '总体状态：正常'
-                    : '总体状态：异常（请检查网络、代理或第三方 API 状态）',
-            ];
-            await sendReply(ctx, event, lines.join('\n'));
-            return;
-        }
-        const blocked = parseBlockedKeywords(state_1.pluginState.config.blockedKeywords);
-        const hit = hitBlockedKeyword(commandText, blocked);
-        if (hit) {
-            await sendReply(ctx, event, `请求已拒绝：命中安全拦截词「${hit}」。`);
-            return;
-        }
-        const waitSeconds = checkRateLimit(event, state_1.pluginState.config.rateLimitSeconds);
-        if (waitSeconds > 0) {
-            await sendReply(ctx, event, `请求过于频繁，请在 ${waitSeconds} 秒后重试。`);
-            return;
-        }
-        // Pixiv 日榜（兼容无前缀调用：!pixiv日榜）
-        if (normalizedRawMessage === '!pixiv日榜' || normalizedCommand === '日榜' || normalizedCommand === 'daily') {
-            const allowR18Config = Boolean(state_1.pluginState.config.allowR18);
-            const allowR18 = event.message_type === 'private' ? allowR18Config : false;
-            const rankings = filterBlockedIllusts(await (0, pixiv_service_1.fetchDailyRanking)(10, allowR18), blocked);
-            if (rankings.length === 0) {
-                await sendReply(ctx, event, '暂时无法获取 Pixiv 日榜，请稍后再试。');
-                return;
-            }
-            const nodes = rankings.map((illust, i) => buildDailyRankingNode(illust, i));
-            const isGroup = event.message_type === 'group';
-            const target = isGroup ? event.group_id : event.user_id;
-            await sendNodesWithFallback(ctx, event, target, isGroup, nodes);
-            return;
-        }
-        const maxResults = Math.min(10, Math.max(1, Number(state_1.pluginState.config.maxResults) || 3));
-        const allowR18Config = Boolean(state_1.pluginState.config.allowR18);
-        const allowR18 = event.message_type === 'private' ? allowR18Config : false;
-        // 推荐指令
-        if (normalizedCommand === 'rec' || normalizedCommand === '推荐') {
-            const illusts = filterBlockedIllusts(await (0, pixiv_service_1.recommendIllusts)(maxResults, allowR18), blocked);
-            if (illusts.length === 0) {
-                await sendReply(ctx, event, '未找到推荐插画，请稍后再试。');
-                return;
-            }
-            // 如果只有一张图片，直接发送
-            if (illusts.length === 1) {
-                const illust = illusts[0];
-                const segments = [
-                    textSegment(`${illust.title} - ${illust.author}\n` + (illust.tags.length > 0 ? `标签: ${illust.tags.join(', ')}\n` : '')),
-                    imageSegment(illust.url),
-                ];
-                await sendReply(ctx, event, segments);
-                return;
-            }
-            // 多张图片，构建合并转发。
-            const botId = event.self_id ? String(event.self_id) : undefined;
-            const isGroup = event.message_type === 'group';
-            const nodes = illusts.map((i) => buildForwardNode(i, isGroup, botId));
-            const target = isGroup ? event.group_id : event.user_id;
-            await sendNodesWithFallback(ctx, event, target, isGroup, nodes);
-            return;
-        }
-        // 默认认为剩余参数是搜索关键字
-        const query = commandText;
-        const illusts = filterBlockedIllusts(await (0, pixiv_service_1.searchIllusts)(query, maxResults, allowR18), blocked);
-        if (illusts.length === 0) {
-            await sendReply(ctx, event, `未找到与 “${query}” 相关的插画。`);
-            return;
-        }
-        // 如果只有一张图片，直接发送
-        if (illusts.length === 1) {
-            const illust = illusts[0];
-            const segments = [
-                textSegment(`${illust.title} - ${illust.author}\n` + (illust.tags.length > 0 ? `标签: ${illust.tags.join(', ')}\n` : '')),
-                imageSegment(illust.url),
-            ];
-            await sendReply(ctx, event, segments);
-            return;
-        }
-        // 多张图片，构建合并转发。
-        const botId2 = event.self_id ? String(event.self_id) : undefined;
-        const isGroup = event.message_type === 'group';
-        const nodes = illusts.map((i) => buildForwardNode(i, isGroup, botId2));
-        const target = isGroup ? event.group_id : event.user_id;
-        await sendNodesWithFallback(ctx, event, target, isGroup, nodes);
-    }
-    catch (err) {
-        state_1.pluginState.logger.error('处理消息时出错:', err);
-    }
+
+// ── Main export ───────────────────────────────────────────────────────────────
+
+export async function handleMessage(event, bot) {
+  if (event.message_type !== 'group') return;
+  const msg = (event.raw_message ?? '').trim();
+  const gid = event.group_id;
+
+  try {
+    if (msg === CMD.RECOMMEND) { await handleRecommend(bot, gid); return; }
+    if (msg === CMD.DAILY)     { await handleRanking(bot, gid, 'day');   return; }
+    if (msg === CMD.WEEKLY)    { await handleRanking(bot, gid, 'week');  return; }
+    if (msg === CMD.MONTHLY)   { await handleRanking(bot, gid, 'month'); return; }
+  } catch (e) {
+    error(`指令处理出错: ${e.message}`);
+  }
 }
