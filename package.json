@@ -1,9 +1,20 @@
 {
   "name": "napcat-plugin-pixiv",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "NapCat Pixiv 图片推荐与排行插件",
+  "description": "NapCat Pixiv 搜索与推荐插件",
   "main": "dist/index.js",
-  "license": "GNU Affero General Public License v3.0",
-  "engines": { "node": ">=22" }
+  "license": "AGPL-3.0-only",
+  "engines": { "node": ">=18" },
+  "napcat": {
+    "displayName": "Pixiv 搜索与推荐",
+    "configSchema": {
+      "r18":             { "type": "number",  "default": 0,               "description": "R18 过滤 (0=关闭 1=仅R18 2=混合)" },
+      "num":             { "type": "number",  "default": 3,               "description": "每次返回图片数量" },
+      "excludeAI":       { "type": "boolean", "default": true,            "description": "排除 AI 生成作品" },
+      "enableForward":   { "type": "boolean", "default": true,            "description": "优先使用合并转发" },
+      "rateLimitSecs":   { "type": "number",  "default": 15,              "description": "每人冷却时间（秒），0 = 关闭" },
+      "blockedKeywords": { "type": "string",  "default": "萝莉,未成年,幼女,乱伦", "description": "屏蔽关键词（逗号分隔）" }
+    }
+  }
 }
