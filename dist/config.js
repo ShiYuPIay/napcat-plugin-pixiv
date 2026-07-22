@@ -1,6 +1,6 @@
 export const Config = {
   r18:             0,                        // 0=非R18, 1=R18, 2=混合
-  num:             3,                        // 每次返回图片数
+  num:             5,                        // 每次返回图片数
   excludeAI:       true,                     // 排除 AI 生成作品
   enableForward:   true,                     // 优先合并转发
   rateLimitSecs:   15,                       // 每人冷却秒数 (0=关闭)
