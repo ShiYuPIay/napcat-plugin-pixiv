@@ -2,7 +2,7 @@ import { handleMessage } from './handlers/message-handler.js';
 
 const TAG = '[Plugin: napcat-plugin-pixiv]';
 
-export async function plugin_onload() {
+export async function plugin_init() {
   console.log(`\x1b[30m[INFO] ${TAG} Pixiv 插件初始化完成\x1b[0m`);
 }
 

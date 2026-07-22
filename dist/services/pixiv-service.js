@@ -13,6 +13,7 @@ export async function fetchRecommend() {
   const res = await fetch(LOLICON, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(8_000),
     body: JSON.stringify({
       num:       Config.num,
       r18:       Config.r18,
@@ -30,7 +31,7 @@ export async function fetchRecommend() {
 }
 
 export async function fetchRanking(mode) {
-  const res = await fetch(`${RANK}?mode=${mode}&page=1`);
+  const res = await fetch(`${RANK}?mode=${mode}&page=1`, { signal: AbortSignal.timeout(8_000) });
   if (!res.ok) throw new Error(`Ranking API ${res.status}`);
   const json = await res.json();
   const items = (json.illusts || []).slice(0, Config.num);

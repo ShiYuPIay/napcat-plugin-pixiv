@@ -86,10 +86,10 @@ export async function handleMessage(event, bot) {
   const gid = event.group_id;
 
   try {
-    if (msg === CMD.RECOMMEND) { await handleRecommend(bot, gid); return; }
-    if (msg === CMD.DAILY)     { await handleRanking(bot, gid, 'day');   return; }
-    if (msg === CMD.WEEKLY)    { await handleRanking(bot, gid, 'week');  return; }
-    if (msg === CMD.MONTHLY)   { await handleRanking(bot, gid, 'month'); return; }
+    if (msg === CMD.RECOMMEND) { info('处理 #pixiv推荐'); await handleRecommend(bot, gid); return; }
+    if (msg === CMD.DAILY)     { info('处理 #pixiv日榜'); await handleRanking(bot, gid, 'day');   return; }
+    if (msg === CMD.WEEKLY)    { info('处理 #pixiv周榜'); await handleRanking(bot, gid, 'week');  return; }
+    if (msg === CMD.MONTHLY)   { info('处理 #pixiv月榜'); await handleRanking(bot, gid, 'month'); return; }
   } catch (e) {
     error(`指令处理出错: ${e.message}`);
   }
