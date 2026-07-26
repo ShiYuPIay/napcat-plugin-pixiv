@@ -1,38 +1,22 @@
-import { fetchRecommend, fetchSearch, fetchRanking, checkApis } from '../services/pixiv-service.js';
-import { CMD, CMD_PREFIX, Config, getBlockedList } from '../config.js';
-
-const TAG   = '[Plugin: napcat-plugin-pixiv]';
-const info  = m => console.log(`\x1b[30m[INFO] ${TAG} ${m}\x1b[0m`);
-const warn  = m => console.warn(`\x1b[33m[WARN] ${TAG} ${m}\x1b[0m`);
-const error = m => console.error(`\x1b[31m[ERROR] ${TAG} ${m}\x1b[0m`);
-
-// ── Rate limiter ──────────────────────────────────────────────────────────────
-
-const cooldowns = new Map(); // user_id → last-invoke timestamp
-
-/**
- * Returns remaining cooldown seconds, or 0 if the user may proceed.
- * Stamps the user's timestamp on proceed.
- */
-function checkCooldown(uid) {
-  if (!Config.rateLimitSecs) return 0;
-  const now  = Date.now();
-  const last = cooldowns.get(uid) ?? 0;
-  const wait = Config.rateLimitSecs * 1000 - (now - last);
-  if (wait > 0) return Math.ceil(wait / 1000);
-  // Prevent unbounded growth in long-running bots
-  if (cooldowns.size >= 1000) cooldowns.clear();
-  cooldowns.set(uid, now);
-  return 0;
-}
+import {
+  fetchRecommend, fetchSearch, fetchRanking, fetchIllust, fetchMemberIllusts, checkApis,
+} from '../services/pixiv-service.js';
+import {
+  CMD, CMD_PREFIX, Config, applyConfig, saveConfigFile, isAdmin, getAdminList, isBlockedText,
+} from '../config.js';
+import { checkCooldown, refundCooldown } from '../core/cooldown.js';
+import { log } from '../core/logger.js';
 
 // ── Message builders ──────────────────────────────────────────────────────────
 
-function buildNode({ pid, title, author, url }) {
-  const caption = `${title} - ${author}\npid: ${pid}`;
+function buildNode(item, selfId) {
+  const caption = `${item.title} - ${item.author}\npid: ${item.pid}`;
   const content = [{ type: 'text', data: { text: caption } }];
-  if (url) content.push({ type: 'image', data: { file: url } });
-  return { type: 'node', data: { name: author || 'Pixiv', uin: '10000', content } };
+  if (item.url) content.push({ type: 'image', data: { file: item.url } });
+  return {
+    type: 'node',
+    data: { name: item.author || 'Pixiv', uin: String(selfId || '10000'), content },
+  };
 }
 
 // ── Send helpers ──────────────────────────────────────────────────────────────
@@ -50,7 +34,7 @@ async function tryForwardMsg(bot, groupId, nodes) {
     await bot.call_api('send_group_forward_msg', { group_id: groupId, messages: nodes });
     return true;
   } catch (e) {
-    warn(`send_group_forward_msg 失败，回退逐条: ${e.message}`);
+    log.warn(`send_group_forward_msg 失败，回退逐条: ${e.message}`);
     return false;
   }
 }
@@ -63,18 +47,19 @@ async function sendOneNode(bot, groupId, node) {
     await bot.call_api('send_group_msg', { group_id: groupId, message: content });
   } catch (e) {
     if (hasImg) {
-      warn(`图片发送失败，降级文字: ${e.message}`);
+      log.warn(`图片发送失败，降级文字: ${e.message}`);
       const textOnly = content.filter(c => c.type === 'text');
       try {
         await bot.call_api('send_group_msg', { group_id: groupId, message: textOnly });
-      } catch (e2) { error(`文字降级也失败: ${e2.message}`); }
+      } catch (e2) { log.error(`文字降级也失败: ${e2.message}`); }
     } else {
-      error(`发送失败: ${e.message}`);
+      log.error(`发送失败: ${e.message}`);
     }
   }
 }
 
 async function sendNodes(bot, groupId, nodes) {
+  if (!nodes.length) return;
   if (Config.enableForward) {
     const ok = await tryForwardMsg(bot, groupId, nodes);
     if (ok) return;
@@ -89,41 +74,142 @@ const HELP = [
   '━━━━━━━━━━━━━━━━━━━━',
   '#pixiv推荐 / #pixivrec   随机推荐插画',
   '#pixiv<关键词>           关键词搜索',
-  '#pixiv日榜               Pixiv 日榜',
-  '#pixiv周榜               Pixiv 周榜',
-  '#pixiv月榜               Pixiv 月榜',
+  '#pixivpid <作品ID>       按 pid 查看作品',
+  '#pixiv画师 <UID>         查看画师最新作品',
+  '#pixiv日榜 / 周榜 / 月榜  排行榜 Top N',
   '#pixivstatus             接口连通性检查',
-  '#pixivhelp               显示此帮助',
+  '#pixiv设置               查看/修改配置（管理员）',
+  '#pixivhelp / #pixiv帮助  显示此帮助',
 ].join('\n');
 
 // ── Command handlers ──────────────────────────────────────────────────────────
 
-async function handleRecommend(bot, gid) {
-  info('处理 #pixiv推荐');
+async function handleRecommend(bot, gid, selfId) {
+  log.info('处理 #pixiv推荐');
   const illusts = await fetchRecommend();
-  await sendNodes(bot, gid, illusts.map(buildNode));
+  if (!illusts.length) {
+    await sendText(bot, gid, '暂时没有符合条件的插画，请稍后再试');
+    return;
+  }
+  await sendNodes(bot, gid, illusts.map(it => buildNode(it, selfId)));
 }
 
-async function handleSearch(bot, gid, keyword) {
-  info(`处理 #pixiv搜索 "${keyword}"`);
+async function handleSearch(bot, gid, selfId, keyword) {
+  log.info(`处理 #pixiv搜索 "${keyword}"`);
   const illusts = await fetchSearch(keyword);
   if (!illusts.length) {
     await sendText(bot, gid, `未找到与「${keyword}」相关的插画`);
     return;
   }
-  await sendNodes(bot, gid, illusts.map(buildNode));
+  await sendNodes(bot, gid, illusts.map(it => buildNode(it, selfId)));
 }
 
-async function handleRanking(bot, gid, mode) {
-  info(`处理 #pixiv榜 mode=${mode}`);
+async function handleRanking(bot, gid, selfId, mode) {
+  log.info(`处理 #pixiv榜 mode=${mode}`);
   const illusts = await fetchRanking(mode);
-  await sendNodes(bot, gid, illusts.map(buildNode));
+  if (!illusts.length) {
+    await sendText(bot, gid, '未获取到榜单数据，请稍后再试');
+    return;
+  }
+  await sendNodes(bot, gid, illusts.map(it => buildNode(it, selfId)));
+}
+
+async function handleIllust(bot, gid, selfId, pid) {
+  log.info(`处理 #pixivpid ${pid}`);
+  const pages = await fetchIllust(pid);
+  if (!pages.length) {
+    await sendText(bot, gid, `未找到作品 ${pid}，或该作品不符合当前内容设置`);
+    return;
+  }
+  await sendNodes(bot, gid, pages.map(p => buildNode(p, selfId)));
+}
+
+async function handleMember(bot, gid, selfId, memberId) {
+  log.info(`处理 #pixiv画师 ${memberId}`);
+  const illusts = await fetchMemberIllusts(memberId);
+  if (!illusts.length) {
+    await sendText(bot, gid, `未找到画师 ${memberId} 的作品，或均被内容设置过滤`);
+    return;
+  }
+  await sendNodes(bot, gid, illusts.map(it => buildNode(it, selfId)));
 }
 
 async function handleStatus(bot, gid) {
-  info('处理 #pixivstatus');
+  log.info('处理 #pixivstatus');
   const status = await checkApis();
   await sendText(bot, gid, `Pixiv 插件接口状态\n${status}`);
+}
+
+// ── Settings command (admin only) ─────────────────────────────────────────────
+
+const SETTABLE = {
+  r18:       'r18',
+  num:       'num',
+  excludeai: 'excludeAI',
+  forward:   'enableForward',
+  cooldown:  'rateLimitSecs',
+};
+
+function settingsSummary() {
+  return [
+    '当前配置：',
+    `r18=${Config.r18}  num=${Config.num}  excludeai=${Config.excludeAI ? 'on' : 'off'}`,
+    `forward=${Config.enableForward ? 'on' : 'off'}  cooldown=${Config.rateLimitSecs}s`,
+    '修改：#pixiv设置 <r18|num|excludeai|forward|cooldown> <值>',
+  ].join('\n');
+}
+
+async function handleSettings(bot, gid, uid, args) {
+  if (!isAdmin(uid)) {
+    await sendText(bot, gid, getAdminList().length
+      ? '仅管理员可查看/修改插件配置'
+      : '未配置管理员：请先在 config.json 或 WebUI 中设置 adminUsers（QQ 号，逗号分隔）');
+    return;
+  }
+  const [rawKey, ...rest] = args.split(/\s+/).filter(Boolean);
+  const key   = SETTABLE[rawKey?.toLowerCase()];
+  const value = rest.join(' ');
+  if (!key || !value) {
+    await sendText(bot, gid, settingsSummary());
+    return;
+  }
+  const { applied } = applyConfig({ [key]: value });
+  if (!(key in applied)) {
+    await sendText(bot, gid, `无效的值：${rawKey} = ${value}`);
+    return;
+  }
+  const persisted = saveConfigFile({ [key]: applied[key] });
+  await sendText(bot, gid,
+    `已更新 ${rawKey} = ${applied[key]}` + (persisted ? '' : '（写入 config.json 失败，重启后失效）'));
+}
+
+// ── Routing ───────────────────────────────────────────────────────────────────
+
+// Network-bound commands, gated behind the per-user cooldown.
+async function route(bot, gid, selfId, msg, keyword) {
+  if (msg === CMD.STATUS) { await handleStatus(bot, gid); return; }
+  if (msg === CMD.RECOMMEND || msg === CMD.REC_ALIAS) { await handleRecommend(bot, gid, selfId); return; }
+  if (msg === CMD.DAILY)   { await handleRanking(bot, gid, selfId, 'day');   return; }
+  if (msg === CMD.WEEKLY)  { await handleRanking(bot, gid, selfId, 'week');  return; }
+  if (msg === CMD.MONTHLY) { await handleRanking(bot, gid, selfId, 'month'); return; }
+
+  let m;
+  if ((m = /^pid\s*(\d+)?$/i.exec(keyword))) {
+    if (!m[1]) { await sendText(bot, gid, '用法：#pixivpid <作品ID>'); return; }
+    await handleIllust(bot, gid, selfId, m[1]);
+    return;
+  }
+  if ((m = /^(?:画师|uid)\s*(\d+)?$/i.exec(keyword))) {
+    if (!m[1]) { await sendText(bot, gid, '用法：#pixiv画师 <画师UID>'); return; }
+    await handleMember(bot, gid, selfId, m[1]);
+    return;
+  }
+
+  if (isBlockedText(keyword)) {
+    await sendText(bot, gid, '该关键词已被屏蔽');
+    return;
+  }
+  await handleSearch(bot, gid, selfId, keyword);
 }
 
 // ── Main entry ────────────────────────────────────────────────────────────────
@@ -134,42 +220,36 @@ export async function handleMessage(event, bot) {
   const msg = (event.raw_message ?? '').trim();
   if (!msg.startsWith(CMD_PREFIX)) return;
 
-  const gid = event.group_id;
-  const uid = event.user_id;
+  const gid    = event.group_id;
+  const uid    = event.user_id;
+  const selfId = event.self_id;
 
   try {
-    // Help and status are not rate-limited
-    if (msg === CMD.HELP)   { await sendText(bot, gid, HELP); return; }
-    if (msg === CMD.STATUS) { await handleStatus(bot, gid);  return; }
+    // Local commands (no upstream request) are never rate-limited
+    if (msg === CMD.HELP || msg === CMD.HELP_ALIAS) { await sendText(bot, gid, HELP); return; }
+    if (msg.startsWith(CMD.SETTINGS)) {
+      await handleSettings(bot, gid, uid, msg.slice(CMD.SETTINGS.length).trim());
+      return;
+    }
 
-    // All other commands are rate-limited
+    const keyword = msg.slice(CMD_PREFIX.length).trim();
+    if (!keyword) { await sendText(bot, gid, HELP); return; }
+
+    // Everything else hits upstream APIs → per-user cooldown
     const wait = checkCooldown(uid);
     if (wait > 0) {
       await sendText(bot, gid, `冷却中，请 ${wait} 秒后再试`);
       return;
     }
 
-    if (msg === CMD.RECOMMEND || msg === CMD.REC_ALIAS) {
-      await handleRecommend(bot, gid);
-      return;
+    try {
+      await route(bot, gid, selfId, msg, keyword);
+    } catch (e) {
+      refundCooldown(uid); // upstream failure shouldn't burn the user's cooldown
+      throw e;
     }
-    if (msg === CMD.DAILY)   { await handleRanking(bot, gid, 'day');   return; }
-    if (msg === CMD.WEEKLY)  { await handleRanking(bot, gid, 'week');  return; }
-    if (msg === CMD.MONTHLY) { await handleRanking(bot, gid, 'month'); return; }
-
-    // Keyword search: #pixiv<keyword>
-    const keyword = msg.slice(CMD_PREFIX.length).trim();
-    if (!keyword) { await sendText(bot, gid, HELP); return; }
-
-    if (getBlockedList().some(kw => keyword.includes(kw))) {
-      await sendText(bot, gid, '该关键词已被屏蔽');
-      return;
-    }
-
-    await handleSearch(bot, gid, keyword);
-
   } catch (e) {
-    error(`指令处理出错: ${e.message}`);
-    try { await sendText(bot, gid, `执行失败：${e.message}`); } catch { /* ignore */ }
+    log.error(`指令处理出错: ${e.stack || e.message}`);
+    try { await sendText(bot, gid, '执行失败，请稍后再试'); } catch { /* ignore */ }
   }
 }

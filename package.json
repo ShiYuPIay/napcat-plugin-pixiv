@@ -1,20 +1,24 @@
 {
   "name": "napcat-plugin-pixiv",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "NapCat Pixiv 搜索与推荐插件",
-  "main": "dist/index.js",
+  "main": "src/index.js",
   "license": "AGPL-3.0-only",
   "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test"
+  },
   "napcat": {
     "displayName": "Pixiv 搜索与推荐",
     "configSchema": {
-      "r18":             { "type": "number",  "default": 0,               "description": "R18 过滤 (0=关闭 1=仅R18 2=混合)" },
-      "num":             { "type": "number",  "default": 3,               "description": "每次返回图片数量" },
-      "excludeAI":       { "type": "boolean", "default": true,            "description": "排除 AI 生成作品" },
-      "enableForward":   { "type": "boolean", "default": true,            "description": "优先使用合并转发" },
-      "rateLimitSecs":   { "type": "number",  "default": 15,              "description": "每人冷却时间（秒），0 = 关闭" },
-      "blockedKeywords": { "type": "string",  "default": "萝莉,未成年,幼女,乱伦", "description": "屏蔽关键词（逗号分隔）" }
+      "r18":             { "type": "number",  "default": 0,     "description": "R18 过滤 (0=关闭 1=仅R18 2=混合)" },
+      "num":             { "type": "number",  "default": 5,     "description": "每次返回图片数量 (1-10)" },
+      "excludeAI":       { "type": "boolean", "default": true,  "description": "排除 AI 生成作品" },
+      "enableForward":   { "type": "boolean", "default": true,  "description": "优先使用合并转发" },
+      "rateLimitSecs":   { "type": "number",  "default": 15,    "description": "每人冷却时间（秒），0 = 关闭" },
+      "blockedKeywords": { "type": "string",  "default": "萝莉,loli,ロリ,正太,shota,ショタ,未成年,幼女,小学生,乱伦", "description": "屏蔽关键词（逗号分隔，匹配搜索词与作品标签）" },
+      "adminUsers":      { "type": "string",  "default": "",    "description": "管理员 QQ 号（逗号分隔），可使用 #pixiv设置" }
     }
   }
 }
