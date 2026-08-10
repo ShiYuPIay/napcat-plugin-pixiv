@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "prefix": "#pixiv",
+  "r18": 0,
+  "num": 5,
+  "excludeAI": true,
+  "enableForward": true,
+  "rateLimitSecs": 15,
+  "blockedKeywords": "萝莉,loli,ロリ,正太,shota,ショタ,未成年,幼女,小学生,乱伦",
+  "adminUsers": "",
+  "loliconApi": "https://api.lolicon.app/setu/v2",
+  "hibiApi": "https://api.obfs.dev/api/pixiv",
+  "imageProxy": "i.pixiv.re",
+  "requestTimeoutMs": 8000
+}
