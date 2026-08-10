@@ -58,11 +58,11 @@ const env = {
 };
 
 console.log('\n[napcat-plugin-pixiv] 检测到 Linux + SnowLuma Docker，开始生产链路自检和守护启动。');
-console.log('[napcat-plugin-pixiv] 先迁移旧版 SnowLuma wsClient(name=Pixiv)，避免 WebUI 持续“重连中”。');
+console.log('[napcat-plugin-pixiv] 迁移旧版 SnowLuma wsClient(name=Pixiv)，避免 WebUI 持续“注意 · 重连中”。');
 run(process.execPath, [resolve(root, 'scripts/migrate-legacy-snowluma.mjs')], env);
 
-console.log('\n[napcat-plugin-pixiv] 真实连接 SnowLuma wsServer 并执行 get_login_info，不再把 FakeWebSocket 测试当成生产连接。');
-run(process.execPath, [distEntry, '--doctor', '--auto'], env);
+console.log('\n[napcat-plugin-pixiv] 执行真实 SnowLuma WebSocket + get_login_info，自检失败会自动重试。');
+run(process.execPath, [resolve(root, 'scripts/doctor-snowluma-retry.mjs')], env);
 
 console.log('\n[napcat-plugin-pixiv] 安装/刷新 systemd 守护，SSH 断开后继续运行。');
 run('bash', [resolve(root, 'scripts/ensure-snowluma-service.sh')], env);
