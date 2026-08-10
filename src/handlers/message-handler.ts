@@ -45,16 +45,24 @@ function plainTextFromSegments(message: MessageSegment[]): string {
     .join('');
 }
 
+function normalizeCommandCandidate(value: string): string {
+  return value
+    .normalize('NFKC')
+    .trim()
+    .replace(/^(?:\[CQ:(?:at|reply),[^\]]+\]\s*)+/i, '')
+    .trim();
+}
+
 export function extractMessageText(event: MessageEvent): string {
   if (Array.isArray(event.message)) {
     const text = plainTextFromSegments(event.message);
-    if (text.trim()) return text.normalize('NFKC').trim();
+    if (text.trim()) return normalizeCommandCandidate(text);
   }
   if (typeof event.raw_message === 'string' && event.raw_message.trim()) {
-    return event.raw_message.normalize('NFKC').trim();
+    return normalizeCommandCandidate(event.raw_message);
   }
   if (typeof event.message === 'string') {
-    return event.message.normalize('NFKC').trim();
+    return normalizeCommandCandidate(event.message);
   }
   return '';
 }
