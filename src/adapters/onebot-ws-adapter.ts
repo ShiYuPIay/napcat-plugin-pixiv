@@ -31,6 +31,7 @@ export interface OneBotWsOptions {
 }
 
 export class OneBotWsAdapter implements BotAdapter {
+  private readonly options: OneBotWsOptions;
   private socket: WebSocket | null = null;
   private stopped = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -39,7 +40,9 @@ export class OneBotWsAdapter implements BotAdapter {
   private readonly pending = new Map<string, PendingRequest>();
   private eventHandler: ((event: MessageEvent) => void | Promise<void>) | null = null;
 
-  constructor(private readonly options: OneBotWsOptions) {}
+  constructor(options: OneBotWsOptions) {
+    this.options = options;
+  }
 
   start(handler: (event: MessageEvent) => void | Promise<void>): void {
     this.eventHandler = handler;
