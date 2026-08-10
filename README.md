@@ -563,75 +563,7 @@ PIXIV_REQUEST_TIMEOUT_MS
 
 第三方 API 可能发生限流、故障、地区网络问题或接口变更，本项目无法保证第三方服务永久可用。
 
----
-
-## 安全与脱敏规范
-
-本 README 的命令示例统一使用占位符，避免公开真实账号、Token、IP、目录和认证信息。
-
-### 不要提交以下内容
-
-```text
-真实机器人 QQ
-真实管理员 QQ
-OneBot Access Token
-NapCat / SnowLuma WebUI 密码
-VNC / noVNC 密码
-服务器公网 IP
-家庭或公司内网地址
-Cookie / Session / Authorization Header
-GitHub PAT / API Key / Secret
-包含敏感字段的 config.json
-未脱敏的运行日志
-```
-
-推荐使用以下占位符：
-
-```text
-<BOT_QQ>
-<ADMIN_QQ>
-<ONEBOT_ACCESS_TOKEN>
-<SERVER_IP>
-<SNOWLUMA_CONTAINER>
-<NAPCAT_PLUGIN_DIR>
-<PLUGIN_DIR>
-<CONFIG_FILE_PATH>
-```
-
-### 日志分享前必须检查
-
-插件运行日志可能包含：
-
-- QQ 用户 ID。
-- QQ 群 ID。
-- 机器人账号 ID。
-- 用户输入的命令文本。
-- WebSocket 地址。
-- 本地文件路径。
-- 上游错误信息。
-
-提交 Issue、PR 或向他人求助之前，请先手动脱敏。
-
-### Token 泄露处理
-
-如果 Token 曾经出现在：
-
-- GitHub Commit。
-- Issue / PR。
-- README。
-- 截图。
-- 日志。
-- 聊天记录。
-
-不要只删除公开内容，应当同时在 SnowLuma / OneBot 中**立即轮换旧 Token**。
-
-### 网络暴露
-
-SnowLuma OneBot、WebUI、VNC / noVNC 不建议直接裸露到公网。
-
-如果插件与 SnowLuma 位于同一台服务器，优先使用本地或受防火墙限制的连接，并为所有管理入口设置强密码和访问控制。
-
----
+------
 
 ## 隐私说明
 
