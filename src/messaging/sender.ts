@@ -4,6 +4,7 @@ import type {
   BotAdapter,
   ForwardNode,
   Id,
+  MessageEvent,
   MessageSegment,
   PixivItem,
 } from '../types.ts';
@@ -33,28 +34,51 @@ function buildNode(item: PixivItem, selfId: Id | undefined): ForwardNode {
   };
 }
 
+function requireTarget(event: MessageEvent): { type: 'group' | 'private'; id: Id } {
+  if (event.message_type === 'group' && event.group_id !== undefined) {
+    return { type: 'group', id: event.group_id };
+  }
+  if (event.message_type === 'private' && event.user_id !== undefined) {
+    return { type: 'private', id: event.user_id };
+  }
+  throw new Error(`Unsupported message target: ${String(event.message_type ?? 'unknown')}`);
+}
+
+async function sendMessage(
+  bot: BotAdapter,
+  event: MessageEvent,
+  message: string | MessageSegment[],
+): Promise<void> {
+  const target = requireTarget(event);
+  if (target.type === 'group') {
+    await bot.sendGroupMessage(target.id, message);
+  } else {
+    await bot.sendPrivateMessage(target.id, message);
+  }
+}
+
 export async function sendText(
   bot: BotAdapter,
-  groupId: Id,
+  event: MessageEvent,
   text: string,
 ): Promise<void> {
-  await bot.sendGroupMessage(groupId, [
+  await sendMessage(bot, event, [
     { type: 'text', data: { text } },
   ]);
 }
 
 async function sendOne(
   bot: BotAdapter,
-  groupId: Id,
+  event: MessageEvent,
   item: PixivItem,
 ): Promise<void> {
   const segments = itemSegments(item);
   try {
-    await bot.sendGroupMessage(groupId, segments);
+    await sendMessage(bot, event, segments);
   } catch (error) {
     if (!item.url) throw error;
     log.warn(`图片发送失败，降级为文字：${error instanceof Error ? error.message : String(error)}`);
-    await bot.sendGroupMessage(groupId, [
+    await sendMessage(bot, event, [
       { type: 'text', data: { text: `${caption(item)}\nhttps://www.pixiv.net/artworks/${item.pid}` } },
     ]);
   }
@@ -62,15 +86,21 @@ async function sendOne(
 
 export async function sendItems(
   bot: BotAdapter,
-  groupId: Id,
-  selfId: Id | undefined,
+  event: MessageEvent,
   items: PixivItem[],
 ): Promise<void> {
   if (!items.length) return;
 
-  if (getConfig().enableForward) {
+  if (
+    event.message_type === 'group' &&
+    event.group_id !== undefined &&
+    getConfig().enableForward
+  ) {
     try {
-      await bot.sendGroupForwardMessage(groupId, items.map((item) => buildNode(item, selfId)));
+      await bot.sendGroupForwardMessage(
+        event.group_id,
+        items.map((item) => buildNode(item, event.self_id)),
+      );
       return;
     } catch (error) {
       log.warn(`合并转发失败，回退逐条发送：${error instanceof Error ? error.message : String(error)}`);
@@ -78,6 +108,6 @@ export async function sendItems(
   }
 
   for (const item of items) {
-    await sendOne(bot, groupId, item);
+    await sendOne(bot, event, item);
   }
 }

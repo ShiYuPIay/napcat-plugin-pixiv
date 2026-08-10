@@ -17,13 +17,14 @@ import {
   fetchRecommend,
   fetchSearch,
 } from '../services/pixiv-service.ts';
-import type { BotAdapter, MessageEvent } from '../types.ts';
+import type { BotAdapter, MessageEvent, MessageSegment } from '../types.ts';
 
 function helpText(): string {
   const { prefix, num } = getConfig();
   return [
     'Pixiv 插件使用指南',
     '━━━━━━━━━━━━━━━━━━━━',
+    `${prefix}ping                    测试插件是否收到 QQ 消息`,
     `${prefix} / ${prefix}随机        随机推荐插画`,
     `${prefix} <关键词>              关键词搜索`,
     `${prefix}pid <作品ID>           按 PID 查看作品`,
@@ -32,16 +33,60 @@ function helpText(): string {
     `${prefix}status                 上游接口连通性检查`,
     `${prefix}设置                   查看/修改配置（管理员）`,
     `${prefix}help / ${prefix}帮助   显示此帮助`,
+    '',
+    '群聊和私聊都支持。若完全无回复，请先在服务器运行 npm run doctor:snowluma。',
   ].join('\n');
+}
+
+function plainTextFromSegments(message: MessageSegment[]): string {
+  return message
+    .filter((segment) => segment.type === 'text')
+    .map((segment) => String(segment.data.text ?? ''))
+    .join('');
+}
+
+function normalizeCommandCandidate(value: string): string {
+  return value
+    .normalize('NFKC')
+    .trim()
+    .replace(/^(?:\[CQ:(?:at|reply),[^\]]+\]\s*)+/i, '')
+    .trim();
+}
+
+export function extractMessageText(event: MessageEvent): string {
+  if (Array.isArray(event.message)) {
+    const text = plainTextFromSegments(event.message);
+    if (text.trim()) return normalizeCommandCandidate(text);
+  }
+  if (typeof event.raw_message === 'string' && event.raw_message.trim()) {
+    return normalizeCommandCandidate(event.raw_message);
+  }
+  if (typeof event.message === 'string') {
+    return normalizeCommandCandidate(event.message);
+  }
+  return '';
+}
+
+function normalizeEvent(event: MessageEvent): MessageEvent | null {
+  if (event.message_type === 'group' && event.group_id !== undefined) return event;
+  if (event.message_type === 'private' && event.user_id !== undefined) return event;
+
+  if (!event.message_type && event.group_id !== undefined) {
+    return { ...event, message_type: 'group' };
+  }
+  if (!event.message_type && event.user_id !== undefined) {
+    return { ...event, message_type: 'private' };
+  }
+  return null;
 }
 
 async function handleRecommend(bot: BotAdapter, event: MessageEvent): Promise<void> {
   const items = await fetchRecommend();
   if (!items.length) {
-    await sendText(bot, event.group_id!, '暂时没有符合条件的插画，请稍后再试');
+    await sendText(bot, event, '暂时没有符合条件的插画，请稍后再试');
     return;
   }
-  await sendItems(bot, event.group_id!, event.self_id, items);
+  await sendItems(bot, event, items);
 }
 
 async function handleSearch(
@@ -50,16 +95,16 @@ async function handleSearch(
   keyword: string,
 ): Promise<void> {
   if (isBlockedText(keyword)) {
-    await sendText(bot, event.group_id!, '该关键词已被屏蔽');
+    await sendText(bot, event, '该关键词已被屏蔽');
     return;
   }
 
   const items = await fetchSearch(keyword);
   if (!items.length) {
-    await sendText(bot, event.group_id!, `未找到与「${keyword}」相关的插画`);
+    await sendText(bot, event, `未找到与「${keyword}」相关的插画`);
     return;
   }
-  await sendItems(bot, event.group_id!, event.self_id, items);
+  await sendItems(bot, event, items);
 }
 
 async function handleRanking(
@@ -69,10 +114,10 @@ async function handleRanking(
 ): Promise<void> {
   const items = await fetchRanking(mode);
   if (!items.length) {
-    await sendText(bot, event.group_id!, '未获取到榜单数据，请稍后再试');
+    await sendText(bot, event, '未获取到榜单数据，请稍后再试');
     return;
   }
-  await sendItems(bot, event.group_id!, event.self_id, items);
+  await sendItems(bot, event, items);
 }
 
 async function handleIllust(
@@ -82,10 +127,10 @@ async function handleIllust(
 ): Promise<void> {
   const items = await fetchIllust(pid);
   if (!items.length) {
-    await sendText(bot, event.group_id!, `未找到作品 ${pid}，或作品被当前内容策略过滤`);
+    await sendText(bot, event, `未找到作品 ${pid}，或作品被当前内容策略过滤`);
     return;
   }
-  await sendItems(bot, event.group_id!, event.self_id, items);
+  await sendItems(bot, event, items);
 }
 
 async function handleMember(
@@ -95,10 +140,10 @@ async function handleMember(
 ): Promise<void> {
   const items = await fetchMemberIllusts(uid);
   if (!items.length) {
-    await sendText(bot, event.group_id!, `未找到画师 ${uid} 的作品，或作品均被过滤`);
+    await sendText(bot, event, `未找到画师 ${uid} 的作品，或作品均被过滤`);
     return;
   }
-  await sendItems(bot, event.group_id!, event.self_id, items);
+  await sendItems(bot, event, items);
 }
 
 const SETTABLE: Record<string, keyof ReturnType<typeof getConfig>> = {
@@ -128,33 +173,33 @@ async function handleSettings(
     const message = getAdminUsers().length
       ? '仅管理员可查看/修改插件配置'
       : '未配置管理员：请先在 NapCat WebUI、config.json 或环境变量中设置 adminUsers';
-    await sendText(bot, event.group_id!, message);
+    await sendText(bot, event, message);
     return;
   }
 
   const [rawKey, ...rest] = args.split(/\s+/).filter(Boolean);
   if (!rawKey) {
-    await sendText(bot, event.group_id!, settingsSummary());
+    await sendText(bot, event, settingsSummary());
     return;
   }
 
   const key = SETTABLE[rawKey.toLowerCase()];
   const rawValue = rest.join(' ');
   if (!key || !rawValue) {
-    await sendText(bot, event.group_id!, settingsSummary());
+    await sendText(bot, event, settingsSummary());
     return;
   }
 
   const { applied } = applyConfig({ [key]: rawValue });
   if (!(key in applied)) {
-    await sendText(bot, event.group_id!, `无效配置值：${rawKey} = ${rawValue}`);
+    await sendText(bot, event, `无效配置值：${rawKey} = ${rawValue}`);
     return;
   }
 
   const persisted = saveConfig(applied);
   await sendText(
     bot,
-    event.group_id!,
+    event,
     `已更新 ${rawKey} = ${String(applied[key])}${persisted ? '' : '（配置文件写入失败，仅本次运行有效）'}`,
   );
 }
@@ -165,7 +210,7 @@ async function routeNetworkCommand(
   message: string,
 ): Promise<void> {
   const { prefix } = getConfig();
-  const suffix = message.slice(prefix.length).trim();
+  const suffix = message.slice(prefix.normalize('NFKC').length).trim();
 
   if (!suffix || suffix === '随机' || suffix === '推荐' || suffix.toLowerCase() === 'rec') {
     await handleRecommend(bot, event);
@@ -185,14 +230,14 @@ async function routeNetworkCommand(
     return;
   }
   if (suffix.toLowerCase() === 'status') {
-    await sendText(bot, event.group_id!, `Pixiv 插件接口状态\n${await checkApis()}`);
+    await sendText(bot, event, `Pixiv 插件接口状态\n${await checkApis()}`);
     return;
   }
 
   const pidMatch = /^pid\s*(\d+)?$/i.exec(suffix);
   if (pidMatch) {
     if (!pidMatch[1]) {
-      await sendText(bot, event.group_id!, `用法：${prefix}pid <作品ID>`);
+      await sendText(bot, event, `用法：${prefix}pid <作品ID>`);
       return;
     }
     await handleIllust(bot, event, pidMatch[1]);
@@ -202,7 +247,7 @@ async function routeNetworkCommand(
   const memberMatch = /^(?:画师|uid)\s*(\d+)?$/i.exec(suffix);
   if (memberMatch) {
     if (!memberMatch[1]) {
-      await sendText(bot, event.group_id!, `用法：${prefix}画师 <画师UID>`);
+      await sendText(bot, event, `用法：${prefix}画师 <画师UID>`);
       return;
     }
     await handleMember(bot, event, memberMatch[1]);
@@ -212,21 +257,49 @@ async function routeNetworkCommand(
   await handleSearch(bot, event, suffix);
 }
 
+function friendlyFailure(error: unknown, prefix: string): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/websocket is not connected|websocket closed/i.test(message)) {
+    return `机器人连接尚未就绪。请在服务器运行 npm run doctor:snowluma；修复后再发送 ${prefix}ping。`;
+  }
+  if (/timeout|fetch failed|econn|enotfound|network/i.test(message)) {
+    return `上游接口连接失败或超时。请发送 ${prefix}status 检查接口状态。`;
+  }
+  return `执行失败：${message.slice(0, 120)}`;
+}
+
 export async function handleMessage(
-  event: MessageEvent,
+  originalEvent: MessageEvent,
   bot: BotAdapter,
 ): Promise<void> {
   const config = getConfig();
-  if (!config.enabled || event.message_type !== 'group' || event.group_id === undefined) return;
+  if (!config.enabled) return;
 
-  const message = String(event.raw_message ?? '').trim();
-  if (!message.startsWith(config.prefix)) return;
+  const event = normalizeEvent(originalEvent);
+  if (!event) return;
 
-  const suffix = message.slice(config.prefix.length).trim();
+  const message = extractMessageText(event);
+  const prefix = config.prefix.normalize('NFKC');
+  if (!message.startsWith(prefix)) return;
+
+  const suffix = message.slice(prefix.length).trim();
+  const target = event.message_type === 'group'
+    ? `群 ${String(event.group_id)}`
+    : `私聊 ${String(event.user_id)}`;
+  log.info(`收到 Pixiv 指令：${target} / user=${String(event.user_id ?? 'unknown')} / ${message.slice(0, 80)}`);
 
   try {
+    if (['ping', '诊断', 'test'].includes(suffix.toLowerCase())) {
+      await sendText(
+        bot,
+        event,
+        `✅ Pixiv 插件在线，QQ 消息收发正常\n当前前缀：${config.prefix}\n发送 ${config.prefix}帮助 查看指令。`,
+      );
+      return;
+    }
+
     if (suffix.toLowerCase() === 'help' || suffix === '帮助') {
-      await sendText(bot, event.group_id, helpText());
+      await sendText(bot, event, helpText());
       return;
     }
 
@@ -237,7 +310,7 @@ export async function handleMessage(
 
     const wait = checkCooldown(event.user_id);
     if (wait > 0) {
-      await sendText(bot, event.group_id, `冷却中，请 ${wait} 秒后再试`);
+      await sendText(bot, event, `冷却中，请 ${wait} 秒后再试`);
       return;
     }
 
@@ -251,9 +324,9 @@ export async function handleMessage(
     const details = error instanceof Error ? error.stack ?? error.message : String(error);
     log.error(`指令处理失败：${details}`);
     try {
-      await sendText(bot, event.group_id, '执行失败，请稍后再试');
-    } catch {
-      // Platform itself is unavailable; no further fallback is possible.
+      await sendText(bot, event, friendlyFailure(error, config.prefix));
+    } catch (sendError) {
+      log.error(`错误提示也无法发送：${sendError instanceof Error ? sendError.message : String(sendError)}`);
     }
   }
 }

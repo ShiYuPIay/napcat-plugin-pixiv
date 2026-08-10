@@ -48,6 +48,16 @@ export class NapCatAdapter implements BotAdapter {
     });
   }
 
+  async sendPrivateMessage(
+    userId: Id,
+    message: string | MessageSegment[],
+  ): Promise<void> {
+    await this.call('send_private_msg', {
+      user_id: String(userId),
+      message,
+    });
+  }
+
   async sendGroupForwardMessage(
     groupId: Id,
     nodes: ForwardNode[],

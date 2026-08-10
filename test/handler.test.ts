@@ -12,10 +12,15 @@ import type {
 
 class FakeBot implements BotAdapter {
   groupMessages: Array<{ groupId: Id; message: string | MessageSegment[] }> = [];
+  privateMessages: Array<{ userId: Id; message: string | MessageSegment[] }> = [];
   forwards: Array<{ groupId: Id; nodes: ForwardNode[] }> = [];
 
   async sendGroupMessage(groupId: Id, message: string | MessageSegment[]): Promise<void> {
     this.groupMessages.push({ groupId, message });
+  }
+
+  async sendPrivateMessage(userId: Id, message: string | MessageSegment[]): Promise<void> {
+    this.privateMessages.push({ userId, message });
   }
 
   async sendGroupForwardMessage(groupId: Id, nodes: ForwardNode[]): Promise<void> {
@@ -63,13 +68,54 @@ test('blocked keyword is rejected before calling upstream', async () => {
   assert.equal(textOf(bot.groupMessages[0].message), '该关键词已被屏蔽');
 });
 
-test('private messages and unrelated text are ignored', async () => {
+test('private ping receives an immediate reply', async () => {
   const bot = new FakeBot();
   await handleMessage({
+    post_type: 'message',
     message_type: 'private',
-    user_id: 2,
-    raw_message: '#pixiv帮助',
+    user_id: '2',
+    raw_message: '#pixivping',
   }, bot);
+
+  assert.equal(bot.privateMessages.length, 1);
+  assert.match(textOf(bot.privateMessages[0].message), /Pixiv 插件在线/);
+});
+
+test('structured OneBot message ignores leading at segment and recognizes command', async () => {
+  const bot = new FakeBot();
+  await handleMessage({
+    post_type: 'message',
+    message_type: 'group',
+    group_id: '1',
+    user_id: '2',
+    raw_message: '[CQ:at,qq=10000] #pixivping',
+    message: [
+      { type: 'at', data: { qq: '10000' } },
+      { type: 'text', data: { text: ' #pixivping' } },
+    ],
+  }, bot);
+
+  assert.equal(bot.groupMessages.length, 1);
+  assert.match(textOf(bot.groupMessages[0].message), /QQ 消息收发正常/);
+});
+
+test('CQ-string message ignores leading at code and recognizes command', async () => {
+  const bot = new FakeBot();
+  await handleMessage({
+    post_type: 'message',
+    message_type: 'group',
+    group_id: '1',
+    user_id: '2',
+    raw_message: '[CQ:at,qq=10000] #pixivping',
+    message: '[CQ:at,qq=10000] #pixivping',
+  }, bot);
+
+  assert.equal(bot.groupMessages.length, 1);
+  assert.match(textOf(bot.groupMessages[0].message), /QQ 消息收发正常/);
+});
+
+test('unrelated text is ignored', async () => {
+  const bot = new FakeBot();
   await handleMessage({
     message_type: 'group',
     group_id: 1,
@@ -77,4 +123,5 @@ test('private messages and unrelated text are ignored', async () => {
     raw_message: 'hello',
   }, bot);
   assert.equal(bot.groupMessages.length, 0);
+  assert.equal(bot.privateMessages.length, 0);
 });

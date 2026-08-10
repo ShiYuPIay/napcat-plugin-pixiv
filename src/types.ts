@@ -18,6 +18,7 @@ export interface MessageEvent {
   post_type?: string;
   message_type?: string;
   raw_message?: string;
+  message?: string | MessageSegment[];
   group_id?: Id;
   user_id?: Id;
   self_id?: Id;
@@ -25,6 +26,7 @@ export interface MessageEvent {
 
 export interface BotAdapter {
   sendGroupMessage(groupId: Id, message: string | MessageSegment[]): Promise<void>;
+  sendPrivateMessage(userId: Id, message: string | MessageSegment[]): Promise<void>;
   sendGroupForwardMessage(groupId: Id, nodes: ForwardNode[]): Promise<void>;
 }
 

@@ -4,7 +4,7 @@ import { NapCatAdapter } from '../src/adapters/napcat-adapter.ts';
 import { OneBotWsAdapter } from '../src/adapters/onebot-ws-adapter.ts';
 import type { MessageEvent } from '../src/types.ts';
 
-test('NapCat adapter calls native actions and stringifies group_id', async () => {
+test('NapCat adapter calls native actions for group and private messages', async () => {
   const calls: Array<{ action: string; params: unknown; adapter: string; config: unknown }> = [];
   const ctx = {
     actions: {
@@ -19,12 +19,18 @@ test('NapCat adapter calls native actions and stringifies group_id', async () =>
 
   const bot = new NapCatAdapter(ctx);
   await bot.sendGroupMessage(12345678901234567890n.toString(), 'hello');
+  await bot.sendPrivateMessage('99887766', 'private');
 
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   assert.equal(calls[0].action, 'send_group_msg');
   assert.deepEqual(calls[0].params, {
     group_id: '12345678901234567890',
     message: 'hello',
+  });
+  assert.equal(calls[1].action, 'send_private_msg');
+  assert.deepEqual(calls[1].params, {
+    user_id: '99887766',
+    message: 'private',
   });
 });
 
@@ -68,7 +74,7 @@ class FakeWebSocket {
 
   close(code = 1000): void {
     this.readyState = FakeWebSocket.CLOSED;
-    this.emit('close', { code });
+    this.emit('close', { code, reason: '' });
   }
 
   emitEvent(event: MessageEvent): void {
@@ -80,7 +86,7 @@ class FakeWebSocket {
   }
 }
 
-test('OneBot WS adapter appends access token, correlates echo, and dispatches events', async () => {
+test('OneBot WS adapter appends access token, correlates echo, sends private messages, and dispatches events', async () => {
   const realWebSocket = globalThis.WebSocket;
   Object.defineProperty(globalThis, 'WebSocket', {
     configurable: true,
@@ -100,19 +106,29 @@ test('OneBot WS adapter appends access token, correlates echo, and dispatches ev
 
     const socket = FakeWebSocket.latest;
     if (!socket) throw new Error('fake WebSocket was not created');
+    assert.equal(bot.isConnected, true);
     assert.match(socket.url, /^ws:\/\/127\.0\.0\.1:3001\//);
     assert.match(socket.url, /access_token=secret\+token/);
 
     await bot.sendGroupMessage(123, 'hello');
-    const request = JSON.parse(socket.sent[0]) as {
+    const groupRequest = JSON.parse(socket.sent[0]) as {
       action: string;
       params: { group_id: string; message: string };
       echo: string;
     };
-    assert.equal(request.action, 'send_group_msg');
-    assert.equal(request.params.group_id, '123');
-    assert.equal(request.params.message, 'hello');
-    assert.match(request.echo, /^pixiv-/);
+    assert.equal(groupRequest.action, 'send_group_msg');
+    assert.equal(groupRequest.params.group_id, '123');
+    assert.equal(groupRequest.params.message, 'hello');
+    assert.match(groupRequest.echo, /^pixiv-/);
+
+    await bot.sendPrivateMessage(456, 'private');
+    const privateRequest = JSON.parse(socket.sent[1]) as {
+      action: string;
+      params: { user_id: string; message: string };
+    };
+    assert.equal(privateRequest.action, 'send_private_msg');
+    assert.equal(privateRequest.params.user_id, '456');
+    assert.equal(privateRequest.params.message, 'private');
 
     socket.emitEvent({
       post_type: 'message',
