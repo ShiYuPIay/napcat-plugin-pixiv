@@ -21,7 +21,13 @@ SnowLuma Pixiv 插件一键部署
 
 默认流程：
   同步远端分支 -> npm 11.19.0 -> 安装依赖 -> check -> SnowLuma doctor
-  -> 安装/更新 systemd 服务 -> 启动服务 -> 打印状态
+  -> 安装/更新 systemd 守护服务 -> 启动服务 -> 打印状态
+
+systemd 守护特性：
+  - 与 SSH 会话完全分离，退出 SSH 后继续运行
+  - 进程异常或正常意外退出都会自动重启
+  - SnowLuma/Docker 尚未就绪时持续重试，不会永久熔断
+  - 日志写入 journald，可通过 journalctl 查看
 EOF
 }
 
@@ -90,24 +96,30 @@ NODE_BIN="$(command -v node)"
 DOCKER_BIN="$(command -v docker)"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
-log "写入 systemd 服务：$SERVICE_FILE"
+log "写入 systemd 守护服务：$SERVICE_FILE"
 cat >"$SERVICE_FILE" <<EOF
 [Unit]
 Description=napcat-plugin-pixiv for SnowLuma OneBot
+Documentation=https://github.com/ShiYuPIay/napcat-plugin-pixiv
 After=network-online.target docker.service
-Wants=network-online.target
-Requires=docker.service
+Wants=network-online.target docker.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 WorkingDirectory=$ROOT
 ExecStart=$NODE_BIN $ROOT/dist/snowluma.mjs --auto
-Restart=on-failure
-RestartSec=5
-TimeoutStopSec=15
+Restart=always
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStartSec=30s
+TimeoutStopSec=20s
 Environment=NODE_ENV=production
 Environment=SNOWLUMA_CONTAINER=$SNOWLUMA_CONTAINER
 Environment=PATH=$(dirname "$NODE_BIN"):$(dirname "$DOCKER_BIN"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=$SERVICE_NAME
 EOF
 
 if [[ -n "$SNOWLUMA_UIN" ]]; then
@@ -123,21 +135,35 @@ EOF
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" >/dev/null
 systemctl restart "$SERVICE_NAME"
-sleep 2
+sleep 3
 
 log "部署结果"
-systemctl --no-pager --full status "$SERVICE_NAME" || {
-  journalctl -u "$SERVICE_NAME" -n 80 --no-pager || true
-  fail "systemd 服务启动失败"
-}
+if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+  systemctl --no-pager --full status "$SERVICE_NAME" || true
+  journalctl -u "$SERVICE_NAME" -n 100 --no-pager || true
+  fail "systemd 守护服务启动失败"
+fi
+
+systemctl --no-pager --full status "$SERVICE_NAME"
 
 cat <<EOF
 
-✅ 部署完成
+✅ 部署完成，插件已由 systemd 守护。
+
+现在可以安全断开 SSH，插件进程不会随 SSH 会话结束。
 
 QQ 验收：
   #pixivping
   #pixiv帮助
+
+服务管理：
+  systemctl status $SERVICE_NAME --no-pager
+  systemctl restart $SERVICE_NAME
+  systemctl stop $SERVICE_NAME
+  systemctl start $SERVICE_NAME
+
+查看最近日志：
+  journalctl -u $SERVICE_NAME -n 100 --no-pager
 
 查看实时日志：
   journalctl -u $SERVICE_NAME -f
