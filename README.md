@@ -4,7 +4,7 @@ Pixiv 图片搜索与推荐插件。业务逻辑只维护一份，同时支持 *
 
 版本 1.3.0 起重点解决两类问题：
 
-- SnowLuma Docker 用户不再需要手工寻找 `3001`、复制 `accessToken` 或猜 `onebot_<uin>.json` 的继承关系。
+- SnowLuma Docker 用户不再需要手工寻找 OneBot WS 端口、复制 `accessToken` 或猜 `onebot_<uin>.json` 的实际生效规则。
 - QQ 群聊和私聊都支持指令；即使 SnowLuma 使用数组消息格式、消息前有 `@机器人`，插件也会提取文本并回复。
 
 ## QQ 指令
@@ -79,8 +79,8 @@ npm run setup:snowluma
 2. 查找 Docker 容器 `snowluma`。
 3. 在容器中查找 SnowLuma OneBot 配置目录，兼容 `/app/data/config`、`/app/snowluma-data/config`、`/app/config`。
 4. 读取 `onebot.json` 和 `onebot_<QQ号>.json`。
-5. 按 SnowLuma 的 `snapshot / overlay` 规则解析账号配置；账号没有单独写 `accessToken` 时，会正确继承全局同名 WebSocket Server 的 Token。
-6. 自动读取 Docker 的宿主机端口映射，不再把 `5099`、`6099`、`3001` 搞混。
+5. 按 SnowLuma 当前 `snapshot / overlay` 和 adapter-name 规则解析真正生效的 WS Server：账号文件未定义 WS adapter 时保留全局 adapter；账号文件定义同名且有效的 adapter 时，以账号 adapter 整体替换全局同名 adapter，不错误做字段级 Token 合并。
+6. 自动读取 Docker 的宿主机端口映射，不再把 `5099`、错误的 `6099`、`3001` 搞混。
 7. 连接 WebSocket 并调用 `get_login_info` 做真实 OneBot Action 自检。
 
 插件不会把完整 Token 打印到终端，也不会把 Token 写入仓库。
@@ -98,7 +98,7 @@ npm run setup:snowluma
 npm run start:snowluma
 ```
 
-`start:snowluma` 使用 Docker 自动发现模式，会忽略以前手工写错的 `ONEBOT_WS_URL=ws://127.0.0.1:6099/` 之类连接配置，重新以当前 SnowLuma 容器的实际 OneBot 配置为准。
+`start:snowluma` 使用 Docker 自动发现模式，会忽略以前 shell 中手工写错的 `ONEBOT_WS_URL=ws://127.0.0.1:6099/` 等连接变量，重新以当前 SnowLuma 容器的实际 OneBot 配置为准。
 
 看到：
 
@@ -135,7 +135,7 @@ OneBot WebSocket 已连接
 
 ## 多 QQ 账号
 
-如果 SnowLuma 容器里登录了多个 QQ，指定要连接的账号：
+如果 SnowLuma 容器里登录了多个 QQ，建议明确指定要连接的账号：
 
 ```bash
 SNOWLUMA_UIN=2304493370 npm run setup:snowluma
@@ -170,19 +170,24 @@ SNOWLUMA_WS_URL / SNOWLUMA_TOKEN
 NAPCAT_WS_URL / NAPCAT_WS_TOKEN
 ```
 
-连接变量优先级是 `ONEBOT_*` → `SNOWLUMA_*` → `NAPCAT_*`。
+手动模式的连接变量优先级是 `ONEBOT_*` → `SNOWLUMA_*` → `NAPCAT_*`。
 
-## 为什么以前 Token length 会是 0
+## 为什么以前会看到 Token length = 0
 
-SnowLuma 支持全局 `onebot.json` 和账号级 `onebot_<uin>.json`。账号配置可以是 overlay：它只写与全局不同的字段。
+SnowLuma 有全局 `onebot.json` 和账号级 `onebot_<uin>.json`。当前源码在非 snapshot 模式下会先读取全局源，再读取账号源；WS adapter 按 `name` 收集，后出现的同名有效 adapter 会整体替换前一项。
 
-因此直接读取：
+因此手工写这种命令并不可靠：
 
 ```js
-account.networks.wsServers[0].accessToken
+account.networks.wsServers.find(x => x.enabled)?.accessToken
 ```
 
-可能得到空值，但**不代表实际运行时没有 Token**。SnowLuma 会先加载全局配置，再叠加账号 overlay。本插件 1.3.0 的 Docker 自动发现逻辑也按这个规则解析，因此不会再要求新手手工复制 Token。
+原因有两个：
+
+- 账号配置可能根本没有定义 `wsServers`，这时实际使用的是全局配置中的 WS adapter。
+- `enabled` 字段可以省略；省略并不等于禁用，所以 `.find(x => x.enabled)` 可能找不到实际有效的 adapter。
+
+1.3.0 的 Docker 自动发现不再靠这种单文件/单字段猜测，而是同时读取全局与账号配置，并按 SnowLuma 当前 adapter-name 替换规则解析后再做真实 WebSocket + `get_login_info` 验证。
 
 ## QQ 输入指令完全无响应
 
@@ -207,8 +212,8 @@ npm run start:snowluma
 
 判断方法：
 
-- `doctor:snowluma` 都失败：先修 SnowLuma WebSocket，不要查 Pixiv API。
-- doctor 成功，但日志完全没有“收到 Pixiv 指令”：检查 SnowLuma WS Server 的 `role`，插件需要 `Universal`，并确认 QQ Hook / OneBotInstance 已正常工作。
+- `doctor:snowluma` 失败：先修 SnowLuma WebSocket，不要查 Pixiv API。
+- doctor 成功，但日志完全没有“收到 Pixiv 指令”：检查 SnowLuma WS Server 的 `role`；插件需要 `Universal`，并确认 QQ Hook / OneBotInstance 已正常工作。
 - 日志收到 `#pixivping`，但 QQ 没回复：检查 `send_group_msg` / `send_private_msg` Action 的错误日志。
 - `#pixivping` 正常但图片命令失败：发送 `#pixivstatus`，这时才检查 Lolicon / Hibi / 图片代理网络。
 
@@ -234,7 +239,7 @@ OneBot WebSocket 已断开 (1006)
 npm run doctor:snowluma
 ```
 
-自动模式会重新读取容器实际端口、路径和有效 Token。SnowLuma 默认 OneBot WS 容器端口通常为 `3001`，WebUI 是 `5099`，两者不是同一个服务。
+自动模式会重新读取容器实际端口、路径和有效配置。SnowLuma 默认 OneBot WS 容器端口通常为 `3001`，WebUI 是 `5099`，两者不是同一个服务。
 
 ## Pixiv 配置
 
@@ -299,7 +304,7 @@ dist/
 
 - 群聊 + 私聊指令。
 - SnowLuma Docker 零配置自动发现。
-- OneBot accessToken 全局 / 账号 overlay 解析。
+- OneBot 全局 / 账号配置按当前 SnowLuma adapter-name 规则解析。
 - `#pixivping` 本地链路自检。
 - R18 / AI 过滤。
 - 搜索词、标题、标签的 NFKC / 大小写 / 空白归一化过滤。
