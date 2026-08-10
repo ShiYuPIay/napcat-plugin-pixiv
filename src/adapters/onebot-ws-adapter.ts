@@ -44,6 +44,10 @@ export class OneBotWsAdapter implements BotAdapter {
     this.options = options;
   }
 
+  get isConnected(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN;
+  }
+
   start(handler: (event: MessageEvent) => void | Promise<void>): void {
     this.eventHandler = handler;
     this.stopped = false;
@@ -93,15 +97,22 @@ export class OneBotWsAdapter implements BotAdapter {
       void this.handleFrame(event.data);
     });
 
-    socket.addEventListener('error', () => {
-      log.warn('OneBot WebSocket 发生连接错误');
+    socket.addEventListener('error', (event) => {
+      const details = 'message' in event && typeof event.message === 'string' && event.message
+        ? `：${event.message}`
+        : '';
+      log.warn(`OneBot WebSocket 发生连接错误${details}`);
     });
 
     socket.addEventListener('close', (event) => {
       if (this.socket === socket) this.socket = null;
-      this.rejectPending(new Error(`OneBot WebSocket closed (${event.code})`));
+      const reason = event.reason ? `，原因：${event.reason}` : '';
+      this.rejectPending(new Error(`OneBot WebSocket closed (${event.code}${reason})`));
       if (!this.stopped) {
-        log.warn(`OneBot WebSocket 已断开 (${event.code})，准备重连`);
+        log.warn(`OneBot WebSocket 已断开 (${event.code})${reason}，准备重连`);
+        if (event.code === 1006) {
+          log.warn('1006 通常表示 WS 地址、端口、路径或 accessToken 不正确；可运行 npm run doctor:snowluma 自动诊断。');
+        }
         this.scheduleReconnect();
       }
     });
@@ -162,7 +173,7 @@ export class OneBotWsAdapter implements BotAdapter {
       return;
     }
 
-    if (this.eventHandler) {
+    if (this.eventHandler && payload.post_type) {
       try {
         await this.eventHandler(payload);
       } catch (error) {
@@ -212,6 +223,16 @@ export class OneBotWsAdapter implements BotAdapter {
   ): Promise<void> {
     await this.call('send_group_msg', {
       group_id: String(groupId),
+      message,
+    });
+  }
+
+  async sendPrivateMessage(
+    userId: Id,
+    message: string | MessageSegment[],
+  ): Promise<void> {
+    await this.call('send_private_msg', {
+      user_id: String(userId),
       message,
     });
   }
