@@ -41,6 +41,7 @@
     "setup:snowluma": "npm run doctor:snowluma",
     "doctor:snowluma": "npm run build && node dist/snowluma.mjs --doctor --auto",
     "start:snowluma": "npm run build && node dist/snowluma.mjs --auto",
+    "deploy:snowluma": "bash scripts/deploy-snowluma.sh",
     "snowluma": "node dist/snowluma.mjs"
   }
 }
