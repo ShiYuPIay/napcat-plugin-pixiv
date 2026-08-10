@@ -99,6 +99,21 @@ test('structured OneBot message ignores leading at segment and recognizes comman
   assert.match(textOf(bot.groupMessages[0].message), /QQ 消息收发正常/);
 });
 
+test('CQ-string message ignores leading at code and recognizes command', async () => {
+  const bot = new FakeBot();
+  await handleMessage({
+    post_type: 'message',
+    message_type: 'group',
+    group_id: '1',
+    user_id: '2',
+    raw_message: '[CQ:at,qq=10000] #pixivping',
+    message: '[CQ:at,qq=10000] #pixivping',
+  }, bot);
+
+  assert.equal(bot.groupMessages.length, 1);
+  assert.match(textOf(bot.groupMessages[0].message), /QQ 消息收发正常/);
+});
+
 test('unrelated text is ignored', async () => {
   const bot = new FakeBot();
   await handleMessage({
