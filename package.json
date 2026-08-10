@@ -1,13 +1,40 @@
 {
   "name": "napcat-plugin-pixiv",
-  "version": "1.1.0",
-  "description": "Pixiv图片搜索推荐插件 for NapCat",
-  "main": "src/index.js",
-  "license": "MIT",
+  "plugin": "Pixiv 搜索与推荐",
+  "version": "1.2.0",
+  "type": "module",
+  "main": "dist/index.mjs",
+  "description": "NapCat Pixiv 搜索与推荐插件，支持 SnowLuma/OneBot v11 独立运行模式",
+  "author": "ShiYuPIay",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "napcat",
+    "snowluma",
+    "onebot",
+    "pixiv",
+    "qq"
+  ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
+  },
+  "napcat": {
+    "tags": ["图片", "搜索", "娱乐"],
+    "minVersion": "4.14.0",
+    "homepage": "https://github.com/ShiYuPIay/napcat-plugin-pixiv"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "napcat-types": "0.0.16"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.1"
+  },
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build",
+    "snowluma": "node dist/snowluma.mjs"
   }
 }
