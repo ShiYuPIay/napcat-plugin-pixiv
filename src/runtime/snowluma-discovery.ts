@@ -46,43 +46,64 @@ function wsServers(config: JsonRecord | null | undefined): JsonRecord[] {
   return records(networks?.wsServers ?? config.wsServers);
 }
 
-function serverName(server: JsonRecord): string {
-  return typeof server.name === 'string' && server.name.trim()
-    ? server.name.trim()
-    : 'ws-default';
+function nonEmptyString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
-function sameServer(left: JsonRecord, right: JsonRecord): boolean {
-  if (typeof left.name === 'string' && typeof right.name === 'string') {
-    return left.name === right.name;
-  }
-  return Number(left.port ?? 3001) === Number(right.port ?? 3001) &&
-    String(left.path ?? '/') === String(right.path ?? '/');
+function parseWsServer(server: JsonRecord, autoName: string): JsonRecord | null {
+  const port = Number(server.port ?? 0);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+
+  const rawPath = typeof server.path === 'string' ? server.path : '/';
+  const path = rawPath === '' ? '/' : rawPath;
+
+  return {
+    name: nonEmptyString(server.name, autoName),
+    enabled: typeof server.enabled === 'boolean' ? server.enabled : undefined,
+    host: nonEmptyString(server.host, '0.0.0.0'),
+    port,
+    path,
+    role: nonEmptyString(server.role, 'Universal'),
+    accessToken: nonEmptyString(server.accessToken),
+  };
 }
 
+/**
+ * Reproduce SnowLuma's current config-source semantics for wsServers:
+ * - snapshot account config is authoritative and does not include global adapters;
+ * - otherwise sources are read in global -> account order;
+ * - adapters are keyed by `name`; a later valid adapter replaces the earlier
+ *   adapter as a whole, rather than field-merging with it;
+ * - an invalid later adapter (for example no positive port) is ignored, just as
+ *   SnowLuma's parseWsServer() ignores it.
+ */
 function effectiveServerRecords(
   globalConfig: JsonRecord | null,
   accountConfig?: JsonRecord | null,
 ): JsonRecord[] {
-  const globalServers = wsServers(globalConfig).map((server) => ({ ...server }));
-  if (!accountConfig) return globalServers;
+  const sources: Array<JsonRecord | null | undefined> =
+    accountConfig?.mode === 'snapshot'
+      ? [accountConfig]
+      : [globalConfig, accountConfig];
 
-  const accountServers = wsServers(accountConfig);
-  if (accountConfig.mode === 'snapshot') {
-    return accountServers.map((server) => ({ ...server }));
-  }
-  if (!accountServers.length) return globalServers;
+  const byName = new Map<string, JsonRecord>();
+  const order: string[] = [];
+  let autoCounter = 0;
 
-  const merged = [...globalServers];
-  for (const overlay of accountServers) {
-    const index = merged.findIndex((base) => sameServer(base, overlay));
-    if (index >= 0) {
-      merged[index] = { ...merged[index], ...overlay };
-    } else {
-      merged.push({ ...overlay });
+  for (const source of sources) {
+    for (const raw of wsServers(source)) {
+      autoCounter += 1;
+      const parsed = parseWsServer(raw, `ws-${autoCounter}`);
+      if (!parsed) continue;
+      const name = String(parsed.name);
+      if (!byName.has(name)) order.push(name);
+      byName.set(name, parsed);
     }
   }
-  return merged;
+
+  return order
+    .map((name) => byName.get(name))
+    .filter((value): value is JsonRecord => Boolean(value));
 }
 
 export function resolveEffectiveWsServer(
@@ -97,22 +118,18 @@ export function resolveEffectiveWsServer(
   );
   if (!selected) return null;
 
-  const port = Number(selected.port ?? 3001);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
-
-  const rawPath = typeof selected.path === 'string' && selected.path.trim()
-    ? selected.path.trim()
-    : '/';
+  const port = Number(selected.port);
+  const rawPath = nonEmptyString(selected.path, '/');
   const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
 
   return {
-    name: serverName(selected),
+    name: nonEmptyString(selected.name, 'ws-default'),
     enabled: true,
-    host: typeof selected.host === 'string' ? selected.host : '127.0.0.1',
+    host: nonEmptyString(selected.host, '0.0.0.0'),
     port,
     path,
-    role: String(selected.role ?? 'Universal'),
-    accessToken: typeof selected.accessToken === 'string' ? selected.accessToken : '',
+    role: nonEmptyString(selected.role, 'Universal'),
+    accessToken: nonEmptyString(selected.accessToken),
   };
 }
 
