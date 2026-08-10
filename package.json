@@ -40,7 +40,7 @@
     "check": "npm run typecheck && npm test && npm run build",
     "setup:snowluma": "npm run doctor:snowluma",
     "doctor:snowluma": "npm run build && node dist/snowluma.mjs --doctor --auto",
-    "start:snowluma": "node dist/snowluma.mjs --auto",
+    "start:snowluma": "npm run build && node dist/snowluma.mjs --auto",
     "snowluma": "node dist/snowluma.mjs"
   }
 }
