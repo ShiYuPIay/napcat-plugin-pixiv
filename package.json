@@ -22,9 +22,6 @@
     "minVersion": "4.14.0",
     "homepage": "https://github.com/ShiYuPIay/napcat-plugin-pixiv"
   },
-  "dependencies": {
-    "napcat-types": "0.0.16"
-  },
   "devDependencies": {
     "@types/node": "^22.15.0",
     "typescript": "^5.9.3",
