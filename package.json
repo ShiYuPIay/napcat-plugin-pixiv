@@ -1,10 +1,10 @@
 {
   "name": "napcat-plugin-pixiv",
   "plugin": "Pixiv 搜索与推荐",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "type": "module",
   "main": "index.mjs",
-  "description": "NapCat Pixiv 搜索与推荐插件，支持 SnowLuma/OneBot v11 独立运行模式",
+  "description": "NapCat Pixiv 搜索与推荐插件，支持 SnowLuma/OneBot v11 零配置 Docker 自动发现",
   "author": "ShiYuPIay",
   "license": "AGPL-3.0-only",
   "packageManager": "npm@11.19.0",
@@ -38,6 +38,9 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build",
+    "setup:snowluma": "npm run build && node dist/snowluma.mjs --doctor --auto",
+    "doctor:snowluma": "node dist/snowluma.mjs --doctor --auto",
+    "start:snowluma": "node dist/snowluma.mjs --auto",
     "snowluma": "node dist/snowluma.mjs"
   }
 }
