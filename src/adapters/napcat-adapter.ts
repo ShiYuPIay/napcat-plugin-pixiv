@@ -23,7 +23,11 @@ export interface NapCatContextLike {
 }
 
 export class NapCatAdapter implements BotAdapter {
-  constructor(private readonly ctx: NapCatContextLike) {}
+  private readonly ctx: NapCatContextLike;
+
+  constructor(ctx: NapCatContextLike) {
+    this.ctx = ctx;
+  }
 
   private async call(action: string, params: unknown): Promise<void> {
     await this.ctx.actions.call(
