@@ -8,7 +8,10 @@ import {
 } from '../config.ts';
 import { bindLogger, log } from '../core/logger.ts';
 import { handleMessage } from '../handlers/message-handler.ts';
-import { resolveSnowLumaConnection } from './snowluma-discovery.ts';
+import {
+  resolveSnowLumaConnection,
+  type SnowLumaConnection,
+} from './snowluma-discovery.ts';
 
 bindLogger(null);
 
@@ -31,14 +34,13 @@ function configurePixiv(): void {
 
 configurePixiv();
 
-let connection;
+let connection: SnowLumaConnection;
 try {
   connection = resolveSnowLumaConnection({ forceDocker });
 } catch (error) {
   log.error(`SnowLuma 自动发现失败：${error instanceof Error ? error.message : String(error)}`);
   log.error('请确认 Docker 容器正在运行，默认容器名应为 snowluma；自定义容器名可设置 SNOWLUMA_CONTAINER。');
-  process.exitCode = 2;
-  throw error;
+  process.exit(2);
 }
 
 const requestTimeoutMs = Number(process.env.ONEBOT_REQUEST_TIMEOUT_MS || 30_000);
