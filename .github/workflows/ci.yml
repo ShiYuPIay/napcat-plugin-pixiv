@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "agent/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify package output
+        run: |
+          test -f dist/index.mjs
+          test -f dist/snowluma.mjs
+          test -f dist/package.json
+          node -e "const p=require('./dist/package.json'); if(p.main!=='index.mjs'||p.license!=='AGPL-3.0-only') process.exit(1)"
