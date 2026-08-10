@@ -2,7 +2,7 @@ import type {
   NapCatPluginContext,
   PluginConfigSchema,
   PluginModule,
-} from 'napcat-types/napcat-onebot/network/plugin/types';
+} from './napcat-plugin-types.ts';
 import { NapCatAdapter, type NapCatContextLike } from './adapters/napcat-adapter.ts';
 import {
   applyConfig,

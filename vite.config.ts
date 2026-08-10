@@ -8,7 +8,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const external = [
   ...builtinModules,
   ...builtinModules.map((name) => `node:${name}`),
-  'napcat-types',
 ];
 
 function copyPackageAssets() {
