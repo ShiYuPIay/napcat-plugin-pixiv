@@ -3,7 +3,9 @@ import { resolve } from 'node:path';
 import { OneBotWsAdapter } from '../adapters/onebot-ws-adapter.ts';
 import {
   applyEnvironment,
+  DEFAULT_CONFIG,
   loadConfig,
+  saveConfig,
   setConfigPath,
 } from '../config.ts';
 import { bindLogger, log } from '../core/logger.ts';
@@ -25,11 +27,26 @@ function configurePixiv(): void {
   if (placeholder) {
     log.warn('检测到教程占位符 PIXIV_CONFIG_FILE=/path/to/config.json，已自动忽略并改用 ./config.json');
   }
+
   const configPath = resolve(!requested || placeholder ? './config.json' : requested);
   setConfigPath(configPath);
-  loadConfig();
+
+  const loaded = loadConfig();
+  if (loaded === null) {
+    if (saveConfig(DEFAULT_CONFIG)) {
+      log.info(`Pixiv 配置文件不存在，已自动创建默认配置：${configPath}`);
+    } else {
+      log.warn(`Pixiv 配置文件不存在且无法创建：${configPath}；本次将使用内置默认配置`);
+    }
+  } else if (loaded.invalid.includes('<config-json>')) {
+    log.warn(`Pixiv 配置文件 JSON 格式无效：${configPath}；本次保留原文件并使用内置默认配置`);
+  } else if (loaded.invalid.length > 0) {
+    log.warn(`Pixiv 配置文件包含未识别或无效字段：${loaded.invalid.join(', ')}`);
+  } else {
+    log.info(`Pixiv 配置文件已加载：${configPath}`);
+  }
+
   applyEnvironment();
-  log.info(`Pixiv 配置文件：${configPath}`);
 }
 
 configurePixiv();
