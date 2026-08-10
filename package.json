@@ -1,7 +1,7 @@
 {
   "name": "napcat-plugin-pixiv",
   "plugin": "Pixiv 搜索与推荐",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "type": "module",
   "main": "index.mjs",
   "description": "NapCat Pixiv 搜索与推荐插件，支持 SnowLuma/OneBot v11 零配置 Docker 自动发现、systemd 守护和多图合并转发",

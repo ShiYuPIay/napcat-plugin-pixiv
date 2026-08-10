@@ -1,15 +1,24 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeEach, test } from 'node:test';
 import {
   applyConfig,
+  DEFAULT_CONFIG,
   getConfig,
   isAdmin,
   isBlockedText,
   normalizeText,
   resetConfig,
+  saveConfig,
+  setConfigPath,
 } from '../src/config.ts';
 
-beforeEach(() => resetConfig());
+beforeEach(() => {
+  resetConfig();
+  setConfigPath(null);
+});
 
 test('configuration validation applies valid values and rejects invalid values', () => {
   const result = applyConfig({
@@ -37,4 +46,19 @@ test('admin parsing accepts only numeric QQ ids', () => {
   assert.equal(isAdmin(123), true);
   assert.equal(isAdmin('456'), true);
   assert.equal(isAdmin('abc'), false);
+});
+
+test('saveConfig creates a missing config.json with defaults', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'napcat-plugin-pixiv-'));
+  const file = join(dir, 'config.json');
+  try {
+    setConfigPath(file);
+    assert.equal(saveConfig(DEFAULT_CONFIG), true);
+    const parsed = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    assert.equal(parsed.prefix, '#pixiv');
+    assert.equal(parsed.num, 5);
+    assert.equal(parsed.enableForward, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
