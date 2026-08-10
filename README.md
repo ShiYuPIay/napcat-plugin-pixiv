@@ -1,11 +1,18 @@
 # napcat-plugin-pixiv
 
-Pixiv 图片搜索与推荐插件。业务逻辑只维护一份，同时支持 **NapCat 原生插件模式** 和 **SnowLuma / OneBot v11 WebSocket 模式**。
+Pixiv 图片搜索与推荐插件，同时支持 **NapCat 原生插件模式** 和 **SnowLuma / OneBot v11 WebSocket 模式**。
 
-版本 1.3.0 起重点解决两类问题：
+## 1.4.0 重点改进
 
-- SnowLuma Docker 用户不再需要手工寻找 OneBot WS 端口、复制 `accessToken` 或猜 `onebot_<uin>.json` 的实际生效规则。
-- QQ 群聊和私聊都支持指令；即使 SnowLuma 使用数组消息格式、消息前有 `@机器人`，插件也会提取文本并回复。
+- **systemd 进程守护**：部署后插件与 SSH 会话完全分离，关闭终端、断开 SSH 后仍继续运行。
+- **异常自动恢复**：Node 进程退出后由 systemd 自动重启；OneBot WebSocket 自身仍保留指数退避重连。
+- **开机自启**：部署脚本自动 `systemctl enable napcat-plugin-pixiv`。
+- **日志统一进入 journald**，方便查看最近日志和实时日志。
+- **多图合并转发**：一次获取 2 张及以上图片时，优先把多张图片放入一个合并转发；群聊与私聊都支持。
+- **单图不套转发**：只有 1 张图片时直接发送图片。
+- **合并转发失败自动降级**：风控、平台或 Action 不支持时自动逐张发送，不让指令静默失败。
+
+> 这里的“多选图片”实现为“一次获取多张结果并合并转发”。标准 OneBot 消息没有通用的 QQ 原生多选复选框交互，因此暂不做“用户点选缩略图后再提交”的交互 UI。
 
 ## QQ 指令
 
@@ -21,141 +28,344 @@ Pixiv 图片搜索与推荐插件。业务逻辑只维护一份，同时支持 *
 | `#pixiv设置` | 管理员查看/修改常用配置 |
 | `#pixivhelp` / `#pixiv帮助` | 显示帮助 |
 
-> 第一次安装不要先测试图片搜索。先发送 `#pixivping`。只要它回复“Pixiv 插件在线”，就说明 QQ → SnowLuma → 插件 → QQ 的消息链路已经正常。
-
-## 零基础：SnowLuma Docker 安装
-
-适合这种环境：SnowLuma 在同一台 Linux 服务器的 Docker 容器中运行，容器名通常是 `snowluma`。
-
-### 1. 进入插件目录
-
-```bash
-cd /root/SnowLuma/plugins/napcat-plugin-pixiv
-```
-
-### 2. 确认 Node / npm
-
-要求：
-
-- Node.js `>=22.12.0`，推荐 Node 24 LTS。
-- npm `>=11.18.0`，推荐 npm `11.19.0`。
-
-```bash
-node -v
-npm -v
-```
-
-npm 太旧时：
-
-```bash
-npm install --global npm@11.19.0
-```
-
-### 3. 安装依赖
-
-只运行普通安装：
-
-```bash
-npm install
-```
-
-**不要运行：**
-
-```bash
-npm install --allow-scripts=all
-```
-
-项目已经在 `package.json` 中精确批准需要的 `esbuild@0.25.12` 安装脚本。
-
-### 4. 一键检测 SnowLuma
-
-```bash
-npm run setup:snowluma
-```
-
-这个命令会自动：
-
-1. 构建插件。
-2. 查找 Docker 容器 `snowluma`。
-3. 在容器中查找 SnowLuma OneBot 配置目录，兼容 `/app/data/config`、`/app/snowluma-data/config`、`/app/config`。
-4. 读取 `onebot.json` 和 `onebot_<QQ号>.json`。
-5. 按 SnowLuma 当前 `snapshot / overlay` 和 adapter-name 规则解析真正生效的 WS Server：账号文件未定义 WS adapter 时保留全局 adapter；账号文件定义同名且有效的 adapter 时，以账号 adapter 整体替换全局同名 adapter，不错误做字段级 Token 合并。
-6. 自动读取 Docker 的宿主机端口映射，不再把 `5099`、错误的 `6099`、`3001` 搞混。
-7. 连接 WebSocket 并调用 `get_login_info` 做真实 OneBot Action 自检。
-
-插件不会把完整 Token 打印到终端，也不会把 Token 写入仓库。
-
-成功时会看到类似：
-
-```text
-✅ SnowLuma 连接诊断通过：WebSocket 鉴权、OneBot Action 均正常。
-下一步：运行 npm run start:snowluma，然后在 QQ 发送 #pixivping。
-```
-
-### 5. 启动插件
-
-```bash
-npm run start:snowluma
-```
-
-`start:snowluma` 使用 Docker 自动发现模式，会忽略以前 shell 中手工写错的 `ONEBOT_WS_URL=ws://127.0.0.1:6099/` 等连接变量，重新以当前 SnowLuma 容器的实际 OneBot 配置为准。
-
-看到：
-
-```text
-OneBot WebSocket 已连接
-```
-
-以后就不要关闭这个进程。如果需要长期运行，建议交给 systemd、TRSS 的守护功能或其他进程管理器。
-
-### 6. QQ 验证
-
-可以在 **群聊或私聊** 输入：
+第一次安装先发送：
 
 ```text
 #pixivping
 ```
 
-正常回复：
+只要回复“Pixiv 插件在线”，就说明 QQ → SnowLuma → 插件 → QQ 链路正常。
 
-```text
-✅ Pixiv 插件在线，QQ 消息收发正常
-当前前缀：#pixiv
-发送 #pixiv帮助 查看指令。
+---
+
+# 零基础：SnowLuma Docker 一键部署
+
+适用于 SnowLuma 和插件运行在同一台 Linux 服务器的情况。
+
+## 第 1 步：进入插件目录
+
+```bash
+cd /root/SnowLuma/plugins/napcat-plugin-pixiv
 ```
 
-然后再试：
+## 第 2 步：更新到最新版
+
+```bash
+git fetch --all --prune
+git switch main
+git pull --ff-only
+```
+
+## 第 3 步：一键部署 + 守护
+
+单 QQ 环境：
+
+```bash
+bash scripts/deploy-snowluma.sh
+```
+
+多 QQ 环境建议明确指定机器人 QQ：
+
+```bash
+SNOWLUMA_UIN=2304493370 bash scripts/deploy-snowluma.sh
+```
+
+也可以使用 npm：
+
+```bash
+SNOWLUMA_UIN=2304493370 npm run deploy:snowluma
+```
+
+部署脚本会自动完成：
+
+1. 同步 `main`。
+2. 固定 npm `11.19.0`。
+3. 安装依赖。
+4. 执行 `typecheck + tests + build`。
+5. 自动发现 SnowLuma Docker 容器、配置目录、OneBot WS 端口与有效配置。
+6. 运行真实 WebSocket 鉴权 + `get_login_info` doctor。
+7. 安装 `/etc/systemd/system/napcat-plugin-pixiv.service`。
+8. 开启开机自启。
+9. 启动并检查守护服务。
+
+成功后会看到：
 
 ```text
-#pixiv帮助
+✅ 部署完成，插件已由 systemd 守护。
+```
+
+此时可以直接退出 SSH：
+
+```bash
+exit
+```
+
+插件不会因为 SSH 关闭而停止。
+
+---
+
+# 进程守护 / SSH 断开后继续运行
+
+服务名称：
+
+```text
+napcat-plugin-pixiv.service
+```
+
+当前守护策略：
+
+```text
+Restart=always
+RestartSec=5s
+StartLimitIntervalSec=0
+```
+
+含义：插件进程异常退出、意外正常退出时都会自动重新启动；systemd 不会因为短时间连续失败而永久停止重试。手动执行 `systemctl stop` 时则会正常停止。
+
+## 小白管理命令
+
+查看状态：
+
+```bash
+npm run service:status
+```
+
+重启：
+
+```bash
+npm run service:restart
+```
+
+查看最近日志：
+
+```bash
+npm run service:logs
+```
+
+实时看日志：
+
+```bash
+npm run service:follow
+```
+
+也可以直接使用 systemd：
+
+```bash
+systemctl status napcat-plugin-pixiv --no-pager
+systemctl restart napcat-plugin-pixiv
+journalctl -u napcat-plugin-pixiv -n 100 --no-pager
+journalctl -u napcat-plugin-pixiv -f
+```
+
+服务器重启后确认自启动：
+
+```bash
+systemctl is-enabled napcat-plugin-pixiv
+systemctl is-active napcat-plugin-pixiv
+```
+
+预期：
+
+```text
+enabled
+active
+```
+
+---
+
+# SnowLuma 自动发现
+
+插件不要求小白手工寻找 OneBot Token。
+
+自动模式会：
+
+- 查找 Docker 容器，默认名称 `snowluma`。
+- 兼容 `/app/data/config`、`/app/snowluma-data/config`、`/app/config`。
+- 读取 `onebot.json` 和 `onebot_<QQ号>.json`。
+- 按 SnowLuma 当前 global/per-UIN adapter 规则解析实际生效配置。
+- 自动读取 Docker 的宿主机端口映射。
+- 只选择能够同时接收事件和发送 Action 的 `Universal` WebSocket Server。
+- 不把完整 accessToken 打印到日志或保存到仓库。
+
+手工诊断：
+
+```bash
+SNOWLUMA_UIN=2304493370 npm run doctor:snowluma
+```
+
+成功时：
+
+```text
+✅ SnowLuma 连接诊断通过：WebSocket 鉴权、OneBot Action 均正常。
+```
+
+---
+
+# 多图片合并转发
+
+插件配置中的 `num` 决定一次最多返回多少条结果，范围为 `1~20`。
+
+例如管理员设置一次返回 5 张：
+
+```text
+#pixiv设置 num 5
+```
+
+然后：
+
+```text
 #pixiv 初音ミク
-#pixiv日榜
-#pixivstatus
 ```
 
-## 多 QQ 账号
+如果上游返回 5 条有效结果，插件会优先发送：
 
-如果 SnowLuma 容器里登录了多个 QQ，建议明确指定要连接的账号：
+```text
+一个合并转发
+├── 图片 1 + 标题/PID
+├── 图片 2 + 标题/PID
+├── 图片 3 + 标题/PID
+├── 图片 4 + 标题/PID
+└── 图片 5 + 标题/PID
+```
+
+行为规则：
+
+- 结果数 `>= 2` 且 `enableForward=true`：优先合并转发。
+- 群聊：使用 `send_group_forward_msg`。
+- 私聊：使用 `send_private_forward_msg`。
+- 只有 1 张：直接发送，不套合并转发。
+- 合并转发失败：自动回退逐张图片。
+- 单张图片发送失败：继续降级成文字 + Pixiv 作品链接。
+
+关闭合并转发：
+
+```text
+#pixiv设置 forward off
+```
+
+重新开启：
+
+```text
+#pixiv设置 forward on
+```
+
+---
+
+# QQ 输入指令完全无响应
+
+先检查进程：
 
 ```bash
-SNOWLUMA_UIN=2304493370 npm run setup:snowluma
-SNOWLUMA_UIN=2304493370 npm run start:snowluma
+npm run service:status
 ```
 
-把 `2304493370` 换成机器人自己的 QQ 号。
-
-## Docker 容器名不是 snowluma
-
-例如容器名叫 `my-snowluma`：
+再看日志：
 
 ```bash
-SNOWLUMA_CONTAINER=my-snowluma npm run setup:snowluma
-SNOWLUMA_CONTAINER=my-snowluma npm run start:snowluma
+npm run service:follow
 ```
 
-## 连接远程 SnowLuma / 非 Docker
+然后在 QQ 发送：
 
-自动发现仅针对本机 Docker。远程 SnowLuma 可以手动设置：
+```text
+#pixivping
+```
+
+日志应该出现类似：
+
+```text
+收到 Pixiv 指令：群 ... / user=... / #pixivping
+```
+
+判断：
+
+- 服务不是 `active`：`npm run service:restart`。
+- 服务反复重启：`npm run service:logs` 查看启动错误。
+- doctor 失败：先修 SnowLuma WebSocket。
+- doctor 成功，但完全没有“收到 Pixiv 指令”：检查 SnowLuma OneBot 事件链路。
+- 收到 `#pixivping` 但 QQ 没回复：检查 `send_group_msg` / `send_private_msg` Action。
+- `#pixivping` 正常但搜图失败：发送 `#pixivstatus` 检查上游。
+
+插件支持：
+
+- 群聊。
+- 私聊。
+- `raw_message`。
+- `message` 字符串。
+- OneBot 数组消息中的 `text` 段。
+- `@机器人 #pixivping`。
+- CQ 字符串形式 `[CQ:at,...] #pixivping`。
+
+---
+
+# 1006 / WebSocket 重新连接
+
+```bash
+npm run doctor:snowluma
+```
+
+自动模式会重新读取容器实际 OneBot WS 配置，而不是继续使用旧 shell 中错误的 `6099` 等地址。
+
+正常生产服务无需手工导出：
+
+```text
+ONEBOT_WS_URL
+ONEBOT_ACCESS_TOKEN
+```
+
+systemd 服务每次启动都会通过 Docker 自动发现当前 SnowLuma 配置。
+
+---
+
+# 环境要求
+
+- Node.js `>=22.12.0`，推荐 Node 24 LTS。
+- npm `>=11.18.0`，推荐 npm `11.19.0`。
+
+升级 npm：
+
+```bash
+npm install --global npm@11.19.0
+```
+
+安装依赖只能使用：
+
+```bash
+npm install
+```
+
+不要使用：
+
+```bash
+npm install --allow-scripts=all
+```
+
+项目已经在 `package.json` 中精确批准 `esbuild@0.25.12`。
+
+---
+
+# 多 QQ / 自定义 Docker 容器名
+
+指定 QQ：
+
+```bash
+SNOWLUMA_UIN=2304493370 npm run doctor:snowluma
+SNOWLUMA_UIN=2304493370 npm run deploy:snowluma
+```
+
+自定义容器：
+
+```bash
+SNOWLUMA_CONTAINER=my-snowluma npm run deploy:snowluma
+```
+
+---
+
+# 远程 / 非 Docker SnowLuma
+
+自动发现主要针对本机 Docker。
+
+远程 SnowLuma 可以手工运行：
 
 ```bash
 export ONEBOT_WS_URL='ws://127.0.0.1:3001/'
@@ -163,99 +373,30 @@ export ONEBOT_ACCESS_TOKEN='你的 OneBot WebSocket Token'
 node dist/snowluma.mjs
 ```
 
-兼容旧变量：
+兼容：
 
 ```text
 SNOWLUMA_WS_URL / SNOWLUMA_TOKEN
 NAPCAT_WS_URL / NAPCAT_WS_TOKEN
 ```
 
-手动模式的连接变量优先级是 `ONEBOT_*` → `SNOWLUMA_*` → `NAPCAT_*`。
+---
 
-## 为什么以前会看到 Token length = 0
+# Pixiv 配置
 
-SnowLuma 有全局 `onebot.json` 和账号级 `onebot_<uin>.json`。当前源码在非 snapshot 模式下会先读取全局源，再读取账号源；WS adapter 按 `name` 收集，后出现的同名有效 adapter 会整体替换前一项。
-
-因此手工写这种命令并不可靠：
-
-```js
-account.networks.wsServers.find(x => x.enabled)?.accessToken
-```
-
-原因有两个：
-
-- 账号配置可能根本没有定义 `wsServers`，这时实际使用的是全局配置中的 WS adapter。
-- `enabled` 字段可以省略；省略并不等于禁用，所以 `.find(x => x.enabled)` 可能找不到实际有效的 adapter。
-
-1.3.0 的 Docker 自动发现不再靠这种单文件/单字段猜测，而是同时读取全局与账号配置，并按 SnowLuma 当前 adapter-name 替换规则解析后再做真实 WebSocket + `get_login_info` 验证。
-
-## QQ 输入指令完全无响应
-
-按这个顺序检查，避免盲目改配置：
-
-```bash
-# 1. 先做服务器链路诊断
-npm run doctor:snowluma
-
-# 2. 正常启动
-npm run start:snowluma
-
-# 3. QQ 发送
-#pixivping
-```
-
-运行日志中收到命令时会显示类似：
+默认：
 
 ```text
-收到 Pixiv 指令：群 ... / user=... / #pixivping
+./config.json
 ```
 
-判断方法：
-
-- `doctor:snowluma` 失败：先修 SnowLuma WebSocket，不要查 Pixiv API。
-- doctor 成功，但日志完全没有“收到 Pixiv 指令”：检查 SnowLuma WS Server 的 `role`；插件需要 `Universal`，并确认 QQ Hook / OneBotInstance 已正常工作。
-- 日志收到 `#pixivping`，但 QQ 没回复：检查 `send_group_msg` / `send_private_msg` Action 的错误日志。
-- `#pixivping` 正常但图片命令失败：发送 `#pixivstatus`，这时才检查 Lolicon / Hibi / 图片代理网络。
-
-插件会同时读取：
-
-- OneBot `raw_message`。
-- `message` 字符串。
-- `message` 数组中的 `text` 段。
-
-因此群里使用 `@机器人 #pixivping` 时，前面的 `at` 消息段不会再导致指令失效。
-
-## 1006 / 一直重新连接
-
-日志出现：
-
-```text
-OneBot WebSocket 已断开 (1006)
-```
-
-直接运行：
-
-```bash
-npm run doctor:snowluma
-```
-
-自动模式会重新读取容器实际端口、路径和有效配置。SnowLuma 默认 OneBot WS 容器端口通常为 `3001`，WebUI 是 `5099`，两者不是同一个服务。
-
-## Pixiv 配置
-
-默认使用插件目录下：
-
-```text
-config.json
-```
-
-可以通过环境变量覆盖：
+可设置：
 
 ```bash
 PIXIV_CONFIG_FILE=/实际/存在的/config.json
 ```
 
-如果误把教程中的 `/path/to/config.json` 原样复制进去，1.3.0 会识别该占位符并自动退回 `./config.json`。
+教程占位符 `/path/to/config.json` 会自动忽略并退回 `./config.json`。
 
 常用环境变量：
 
@@ -275,59 +416,32 @@ PIXIV_IMAGE_PROXY
 PIXIV_REQUEST_TIMEOUT_MS
 ```
 
-## NapCat 原生插件模式
+---
 
-NapCat 模式不需要自行连接 WebSocket，使用当前 NapCat 插件生命周期和 `ctx.actions.call(...)`。
+# NapCat 原生插件模式
 
-开发构建：
+NapCat 模式使用 NapCat 原生插件生命周期，不需要插件自己连接 NapCat WebSocket。
 
 ```bash
 npm install
 npm run check
 ```
 
-构建后的插件包在：
+构建产物：
 
 ```text
 dist/
-├── index.mjs       # NapCat 原生插件入口
-├── snowluma.mjs    # SnowLuma / OneBot 独立入口
+├── index.mjs
+├── snowluma.mjs
 ├── chunks/
 ├── package.json
 ├── README.md
 └── LICENSE
 ```
 
-将 `dist/` 的内容作为 NapCat 插件包部署即可。
+---
 
-## 功能与可靠性
-
-- 群聊 + 私聊指令。
-- SnowLuma Docker 零配置自动发现。
-- OneBot 全局 / 账号配置按当前 SnowLuma adapter-name 规则解析。
-- `#pixivping` 本地链路自检。
-- R18 / AI 过滤。
-- 搜索词、标题、标签的 NFKC / 大小写 / 空白归一化过滤。
-- 每用户冷却，网络失败自动退款。
-- 群聊优先合并转发，失败回退逐条。
-- 私聊自动逐条发送。
-- 图片发送失败降级为文字 + Pixiv 作品链接。
-- WebSocket action `echo` 关联、超时、指数退避重连。
-- 1006 给出明确诊断提示。
-
-## 默认上游
-
-- Lolicon：`https://api.lolicon.app/setu/v2`
-- Pixiv/Hibi：`https://api.obfs.dev/api/pixiv`
-- 图片反代：`i.pixiv.re`
-
-这些是第三方服务，可能限流、故障或改接口。使用 `#pixivstatus` 区分“机器人链路故障”和“Pixiv 上游故障”。
-
-## 安全建议
-
-SnowLuma OneBot、WebUI、VNC/noVNC 不建议直接暴露到公网。插件和 SnowLuma Docker 在同一服务器时，优先只通过 localhost 使用 OneBot 端口，并及时更换已经出现在截图、日志或聊天中的旧 Token。
-
-## 开发验证
+# 开发验证
 
 ```bash
 npm run typecheck
@@ -335,6 +449,24 @@ npm test
 npm run build
 npm install-scripts ls
 ```
+
+## 默认上游
+
+- Lolicon：`https://api.lolicon.app/setu/v2`
+- Pixiv/Hibi：`https://api.obfs.dev/api/pixiv`
+- 图片反代：`i.pixiv.re`
+
+第三方接口可能限流、故障或改变接口。使用：
+
+```text
+#pixivstatus
+```
+
+区分机器人链路故障与 Pixiv 上游故障。
+
+## 安全建议
+
+SnowLuma OneBot、WebUI、VNC/noVNC 不建议直接暴露公网。插件与 SnowLuma 位于同一服务器时，优先只通过 localhost 使用 OneBot 端口，并及时更换曾经暴露在截图或日志中的旧 Token。
 
 ## 许可证
 
