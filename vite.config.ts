@@ -35,7 +35,7 @@ function copyPackageAssets() {
         `${JSON.stringify(distPackage, null, 2)}\n`,
       );
 
-      for (const file of ['LICENSE', 'README.md']) {
+      for (const file of ['LICENSE', 'README.md', 'config.example.json']) {
         const source = resolve(__dirname, file);
         if (fs.existsSync(source)) fs.copyFileSync(source, resolve(dist, file));
       }
