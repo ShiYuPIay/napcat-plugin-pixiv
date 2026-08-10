@@ -2,9 +2,18 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { NapCatAdapter } from '../src/adapters/napcat-adapter.ts';
 import { OneBotWsAdapter } from '../src/adapters/onebot-ws-adapter.ts';
-import type { MessageEvent } from '../src/types.ts';
+import type { ForwardNode, MessageEvent } from '../src/types.ts';
 
-test('NapCat adapter calls native actions for group and private messages', async () => {
+const nodes: ForwardNode[] = [{
+  type: 'node',
+  data: {
+    name: 'Pixiv',
+    uin: '10000',
+    content: [{ type: 'text', data: { text: 'demo' } }],
+  },
+}];
+
+test('NapCat adapter calls native actions for messages and merged forwards', async () => {
   const calls: Array<{ action: string; params: unknown; adapter: string; config: unknown }> = [];
   const ctx = {
     actions: {
@@ -20,8 +29,10 @@ test('NapCat adapter calls native actions for group and private messages', async
   const bot = new NapCatAdapter(ctx);
   await bot.sendGroupMessage(12345678901234567890n.toString(), 'hello');
   await bot.sendPrivateMessage('99887766', 'private');
+  await bot.sendGroupForwardMessage('123', nodes);
+  await bot.sendPrivateForwardMessage('456', nodes);
 
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 4);
   assert.equal(calls[0].action, 'send_group_msg');
   assert.deepEqual(calls[0].params, {
     group_id: '12345678901234567890',
@@ -32,6 +43,10 @@ test('NapCat adapter calls native actions for group and private messages', async
     user_id: '99887766',
     message: 'private',
   });
+  assert.equal(calls[2].action, 'send_group_forward_msg');
+  assert.deepEqual(calls[2].params, { group_id: '123', messages: nodes });
+  assert.equal(calls[3].action, 'send_private_forward_msg');
+  assert.deepEqual(calls[3].params, { user_id: '456', messages: nodes });
 });
 
 class FakeWebSocket {
@@ -86,7 +101,7 @@ class FakeWebSocket {
   }
 }
 
-test('OneBot WS adapter appends access token, correlates echo, sends private messages, and dispatches events', async () => {
+test('OneBot WS adapter supports message and merged-forward actions', async () => {
   const realWebSocket = globalThis.WebSocket;
   Object.defineProperty(globalThis, 'WebSocket', {
     configurable: true,
@@ -111,24 +126,27 @@ test('OneBot WS adapter appends access token, correlates echo, sends private mes
     assert.match(socket.url, /access_token=secret\+token/);
 
     await bot.sendGroupMessage(123, 'hello');
-    const groupRequest = JSON.parse(socket.sent[0]) as {
-      action: string;
-      params: { group_id: string; message: string };
-      echo: string;
-    };
-    assert.equal(groupRequest.action, 'send_group_msg');
-    assert.equal(groupRequest.params.group_id, '123');
-    assert.equal(groupRequest.params.message, 'hello');
-    assert.match(groupRequest.echo, /^pixiv-/);
-
     await bot.sendPrivateMessage(456, 'private');
-    const privateRequest = JSON.parse(socket.sent[1]) as {
+    await bot.sendGroupForwardMessage(123, nodes);
+    await bot.sendPrivateForwardMessage(456, nodes);
+
+    const requests = socket.sent.map((entry) => JSON.parse(entry) as {
       action: string;
-      params: { user_id: string; message: string };
-    };
-    assert.equal(privateRequest.action, 'send_private_msg');
-    assert.equal(privateRequest.params.user_id, '456');
-    assert.equal(privateRequest.params.message, 'private');
+      params: Record<string, unknown>;
+      echo: string;
+    });
+
+    assert.deepEqual(requests.map((request) => request.action), [
+      'send_group_msg',
+      'send_private_msg',
+      'send_group_forward_msg',
+      'send_private_forward_msg',
+    ]);
+    assert.equal(requests[0].params.group_id, '123');
+    assert.equal(requests[1].params.user_id, '456');
+    assert.deepEqual(requests[2].params.messages, nodes);
+    assert.deepEqual(requests[3].params.messages, nodes);
+    assert.match(requests[0].echo, /^pixiv-/);
 
     socket.emitEvent({
       post_type: 'message',

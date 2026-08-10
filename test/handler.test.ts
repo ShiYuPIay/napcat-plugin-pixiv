@@ -14,6 +14,7 @@ class FakeBot implements BotAdapter {
   groupMessages: Array<{ groupId: Id; message: string | MessageSegment[] }> = [];
   privateMessages: Array<{ userId: Id; message: string | MessageSegment[] }> = [];
   forwards: Array<{ groupId: Id; nodes: ForwardNode[] }> = [];
+  privateForwards: Array<{ userId: Id; nodes: ForwardNode[] }> = [];
 
   async sendGroupMessage(groupId: Id, message: string | MessageSegment[]): Promise<void> {
     this.groupMessages.push({ groupId, message });
@@ -25,6 +26,10 @@ class FakeBot implements BotAdapter {
 
   async sendGroupForwardMessage(groupId: Id, nodes: ForwardNode[]): Promise<void> {
     this.forwards.push({ groupId, nodes });
+  }
+
+  async sendPrivateForwardMessage(userId: Id, nodes: ForwardNode[]): Promise<void> {
+    this.privateForwards.push({ userId, nodes });
   }
 }
 
