@@ -20,7 +20,7 @@ SnowLuma Pixiv 插件一键部署
 
 默认流程：
   同步代码 -> npm 11.19.0 -> 安装依赖 -> 纯代码检查 -> 迁移旧反向 WS 配置
-  -> 真实 SnowLuma doctor -> 安装/刷新 systemd 守护 -> 启动并验证
+  -> 自动重试真实 SnowLuma doctor -> 安装/刷新 systemd 守护 -> 启动并验证
 EOF
 }
 
@@ -77,8 +77,8 @@ fi
 log "迁移旧版 SnowLuma Pixiv 反向 WebSocket 配置"
 env "${RUNTIME_ENV[@]}" node scripts/migrate-legacy-snowluma.mjs
 
-log "执行真实 SnowLuma WebSocket / OneBot 诊断"
-env "${RUNTIME_ENV[@]}" node dist/snowluma.mjs --doctor --auto
+log "执行真实 SnowLuma WebSocket / OneBot 诊断（自动等待 SnowLuma/QQ 恢复）"
+env "${RUNTIME_ENV[@]}" node scripts/doctor-snowluma-retry.mjs
 
 if [[ "$INSTALL_SERVICE" -eq 0 ]]; then
   log "检查通过；按 --no-service 要求不安装 systemd"
