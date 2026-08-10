@@ -61,15 +61,23 @@ EOF
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" >/dev/null
 systemctl restart "$SERVICE_NAME"
-sleep 3
 
-if ! systemctl is-active --quiet "$SERVICE_NAME"; then
-  systemctl --no-pager --full status "$SERVICE_NAME" || true
-  journalctl -u "$SERVICE_NAME" -n 100 --no-pager || true
-  fail "systemd 守护启动失败"
-fi
+for _ in $(seq 1 15); do
+  if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+    sleep 2
+    continue
+  fi
+  if journalctl -u "$SERVICE_NAME" --since "30 seconds ago" --no-pager 2>/dev/null \
+    | grep -q 'OneBot WebSocket 已连接'; then
+    log "systemd 守护已启动并确认真实 OneBot WebSocket 已连接"
+    systemctl is-enabled "$SERVICE_NAME"
+    systemctl is-active "$SERVICE_NAME"
+    systemctl --no-pager --full status "$SERVICE_NAME" | sed -n '1,12p'
+    exit 0
+  fi
+  sleep 2
+done
 
-log "systemd 守护已启动"
-systemctl is-enabled "$SERVICE_NAME"
-systemctl is-active "$SERVICE_NAME"
-systemctl --no-pager --full status "$SERVICE_NAME" | sed -n '1,12p'
+systemctl --no-pager --full status "$SERVICE_NAME" || true
+journalctl -u "$SERVICE_NAME" -n 120 --no-pager || true
+fail "systemd 进程虽然可能仍在运行，但 30 秒内没有确认 OneBot WebSocket 已连接；拒绝把它误报为部署成功"
