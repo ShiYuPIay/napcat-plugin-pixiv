@@ -67,7 +67,10 @@ try {
   for (const item of result.changed) {
     console.log(`[napcat-plugin-pixiv] 已备份：${item.backup}`);
   }
-  console.log('[napcat-plugin-pixiv] 当前版本使用插件主动连接 SnowLuma wsServer；旧 wsClient 会造成 WebUI 持续显示“重连中”。');
+  console.log('[napcat-plugin-pixiv] 当前版本改用插件主动连接 SnowLuma wsServer；旧 wsClient 正是 WebUI 持续显示“注意 · 重连中”的来源。');
+  console.log(`[napcat-plugin-pixiv] 正在重启 SnowLuma 容器 ${container} 使迁移立即生效...`);
+  execFileSync('docker', ['restart', container], { stdio: 'inherit', timeout: 60_000 });
+  console.log('[napcat-plugin-pixiv] SnowLuma 已重启，接下来会自动重试真实 OneBot 连接。');
 } catch (error) {
   console.warn(`[napcat-plugin-pixiv] SnowLuma 旧配置迁移跳过：${error instanceof Error ? error.message : String(error)}`);
 }
