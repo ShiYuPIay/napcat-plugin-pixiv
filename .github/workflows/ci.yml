@@ -10,13 +10,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: pixiv-ci-${{ github.workflow }}-${{ github.ref }}
+  group: pixiv-ci-${{ github.workflow }}-${{ github.ref }}-${{ matrix.node }}
   cancel-in-progress: true
 
 jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
 
     steps:
       - name: Checkout
@@ -25,10 +29,21 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
+
+      - name: Use supported npm
+        run: npm install --global npm@11.19.0
+
+      - name: Show toolchain
+        run: |
+          node --version
+          npm --version
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+
+      - name: Verify install-script approvals
+        run: npm install-scripts ls
 
       - name: Typecheck
         run: npm run typecheck
