@@ -23,7 +23,7 @@
     "homepage": "https://github.com/ShiYuPIay/napcat-plugin-pixiv"
   },
   "dependencies": {
-    "napcat-types": "0.0.16"
+    "napcat-types": "0.0.17"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
