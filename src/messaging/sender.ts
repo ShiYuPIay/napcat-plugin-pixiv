@@ -57,6 +57,20 @@ async function sendMessage(
   }
 }
 
+async function sendMergedForward(
+  bot: BotAdapter,
+  event: MessageEvent,
+  items: PixivItem[],
+): Promise<void> {
+  const target = requireTarget(event);
+  const nodes = items.map((item) => buildNode(item, event.self_id));
+  if (target.type === 'group') {
+    await bot.sendGroupForwardMessage(target.id, nodes);
+  } else {
+    await bot.sendPrivateForwardMessage(target.id, nodes);
+  }
+}
+
 export async function sendText(
   bot: BotAdapter,
   event: MessageEvent,
@@ -91,19 +105,14 @@ export async function sendItems(
 ): Promise<void> {
   if (!items.length) return;
 
-  if (
-    event.message_type === 'group' &&
-    event.group_id !== undefined &&
-    getConfig().enableForward
-  ) {
+  // 单图直接发送；两张及以上才使用合并转发，避免“只有一张图也套一层转发”。
+  if (items.length >= 2 && getConfig().enableForward) {
     try {
-      await bot.sendGroupForwardMessage(
-        event.group_id,
-        items.map((item) => buildNode(item, event.self_id)),
-      );
+      await sendMergedForward(bot, event, items);
+      log.info(`已发送 ${items.length} 张图片的合并转发`);
       return;
     } catch (error) {
-      log.warn(`合并转发失败，回退逐条发送：${error instanceof Error ? error.message : String(error)}`);
+      log.warn(`多图合并转发失败，回退逐条发送：${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
