@@ -29,15 +29,33 @@ Pixiv 图片搜索与推荐插件。业务逻辑只维护一份，同时支持�
 - SnowLuma/OneBot WebSocket 断线指数退避重连、`echo` 请求关联和 action 超时。
 - 无图片 `HEAD` 预检，避免额外 RTT 和 CDN 对 HEAD 的兼容问题。
 
-## 开发
+## 环境要求
 
-要求 Node.js 22+。
+- Node.js `>=22.12.0`。
+- npm `>=11.18.0`；推荐 npm `11.19.0`。
+
+npm 11.16 是 `allowScripts` 首批实现版本，存在已知的审批/告警问题。本项目使用项目级 `allowScripts` 并固定 `esbuild@0.25.12`，不要对项目执行 `npm install --allow-scripts=all`。
+
+升级 npm：
+
+```bash
+npm install --global npm@11.19.0
+npm --version
+```
+
+## 开发
 
 ```bash
 npm install
 npm run typecheck
 npm test
 npm run build
+```
+
+如需检查是否仍有未审核的依赖安装脚本：
+
+```bash
+npm install-scripts ls
 ```
 
 构建后：
@@ -74,6 +92,7 @@ SnowLuma 默认 OneBot WebSocket 端口为 `3001`。确保对应 `wsServers` 已
 先构建：
 
 ```bash
+npm install --global npm@11.19.0
 npm install
 npm run build
 ```
