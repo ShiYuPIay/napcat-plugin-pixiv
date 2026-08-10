@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SERVICE_NAME="napcat-plugin-pixiv"
 BRANCH="${PIXIV_BRANCH:-main}"
 SNOWLUMA_CONTAINER="${SNOWLUMA_CONTAINER:-snowluma}"
 SNOWLUMA_UIN="${SNOWLUMA_UIN:-}"
@@ -20,14 +19,8 @@ SnowLuma Pixiv 插件一键部署
   SNOWLUMA_UIN        多 QQ 环境下指定机器人 QQ 号
 
 默认流程：
-  同步远端分支 -> npm 11.19.0 -> 安装依赖 -> check -> SnowLuma doctor
-  -> 安装/更新 systemd 守护服务 -> 启动服务 -> 打印状态
-
-systemd 守护特性：
-  - 与 SSH 会话完全分离，退出 SSH 后继续运行
-  - 进程异常或正常意外退出都会自动重启
-  - SnowLuma/Docker 尚未就绪时持续重试，不会永久熔断
-  - 日志写入 journald，可通过 journalctl 查看
+  同步代码 -> npm 11.19.0 -> 安装依赖 -> 纯代码检查 -> 迁移旧反向 WS 配置
+  -> 真实 SnowLuma doctor -> 安装/刷新 systemd 守护 -> 启动并验证
 EOF
 }
 
@@ -73,102 +66,42 @@ npm -v
 log "安装依赖"
 npm install --no-audit --no-fund
 
-log "执行完整项目检查"
-npm run check
+log "执行纯代码检查（不在此步骤启动守护，避免递归）"
+PIXIV_CHECK_ONLY=1 npm run check
 
-log "执行 SnowLuma WebSocket / OneBot 真实诊断"
-DOCTOR_ENV=("SNOWLUMA_CONTAINER=$SNOWLUMA_CONTAINER")
+RUNTIME_ENV=("SNOWLUMA_CONTAINER=$SNOWLUMA_CONTAINER")
 if [[ -n "$SNOWLUMA_UIN" ]]; then
-  DOCTOR_ENV+=("SNOWLUMA_UIN=$SNOWLUMA_UIN")
+  RUNTIME_ENV+=("SNOWLUMA_UIN=$SNOWLUMA_UIN")
 fi
-env "${DOCTOR_ENV[@]}" npm run doctor:snowluma
+
+log "迁移旧版 SnowLuma Pixiv 反向 WebSocket 配置"
+env "${RUNTIME_ENV[@]}" node scripts/migrate-legacy-snowluma.mjs
+
+log "执行真实 SnowLuma WebSocket / OneBot 诊断"
+env "${RUNTIME_ENV[@]}" node dist/snowluma.mjs --doctor --auto
 
 if [[ "$INSTALL_SERVICE" -eq 0 ]]; then
-  log "检查通过；按 --no-service 要求不安装 systemd 服务"
-  echo "前台启动：SNOWLUMA_CONTAINER=$SNOWLUMA_CONTAINER ${SNOWLUMA_UIN:+SNOWLUMA_UIN=$SNOWLUMA_UIN }npm run start:snowluma"
+  log "检查通过；按 --no-service 要求不安装 systemd"
+  echo "前台启动：SNOWLUMA_CONTAINER=$SNOWLUMA_CONTAINER ${SNOWLUMA_UIN:+SNOWLUMA_UIN=$SNOWLUMA_UIN }node dist/snowluma.mjs --auto"
   exit 0
 fi
 
-[[ "$(id -u)" -eq 0 ]] || fail "安装 systemd 服务需要 root。请使用 sudo/root 运行，或加 --no-service。"
-command -v systemctl >/dev/null 2>&1 || fail "系统没有 systemctl；请使用 --no-service 后交给现有进程管理器运行"
-
-NODE_BIN="$(command -v node)"
-DOCKER_BIN="$(command -v docker)"
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-
-log "写入 systemd 守护服务：$SERVICE_FILE"
-cat >"$SERVICE_FILE" <<EOF
-[Unit]
-Description=napcat-plugin-pixiv for SnowLuma OneBot
-Documentation=https://github.com/ShiYuPIay/napcat-plugin-pixiv
-After=network-online.target docker.service
-Wants=network-online.target docker.service
-StartLimitIntervalSec=0
-
-[Service]
-Type=simple
-WorkingDirectory=$ROOT
-ExecStart=$NODE_BIN $ROOT/dist/snowluma.mjs --auto
-Restart=always
-RestartSec=5s
-KillSignal=SIGTERM
-TimeoutStartSec=30s
-TimeoutStopSec=20s
-Environment=NODE_ENV=production
-Environment=SNOWLUMA_CONTAINER=$SNOWLUMA_CONTAINER
-Environment=PATH=$(dirname "$NODE_BIN"):$(dirname "$DOCKER_BIN"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=$SERVICE_NAME
-EOF
-
-if [[ -n "$SNOWLUMA_UIN" ]]; then
-  printf 'Environment=SNOWLUMA_UIN=%s\n' "$SNOWLUMA_UIN" >>"$SERVICE_FILE"
-fi
-
-cat >>"$SERVICE_FILE" <<'EOF'
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable "$SERVICE_NAME" >/dev/null
-systemctl restart "$SERVICE_NAME"
-sleep 3
-
-log "部署结果"
-if ! systemctl is-active --quiet "$SERVICE_NAME"; then
-  systemctl --no-pager --full status "$SERVICE_NAME" || true
-  journalctl -u "$SERVICE_NAME" -n 100 --no-pager || true
-  fail "systemd 守护服务启动失败"
-fi
-
-systemctl --no-pager --full status "$SERVICE_NAME"
+log "安装并启动 systemd 守护"
+env "${RUNTIME_ENV[@]}" bash scripts/ensure-snowluma-service.sh
 
 cat <<EOF
 
-✅ 部署完成，插件已由 systemd 守护。
+✅ 部署完成。
 
-现在可以安全断开 SSH，插件进程不会随 SSH 会话结束。
+插件现在由 systemd 后台守护，可以安全断开 SSH。
 
 QQ 验收：
   #pixivping
   #pixiv帮助
 
-服务管理：
-  systemctl status $SERVICE_NAME --no-pager
-  systemctl restart $SERVICE_NAME
-  systemctl stop $SERVICE_NAME
-  systemctl start $SERVICE_NAME
+查看状态：
+  npm run service:status
 
-查看最近日志：
-  journalctl -u $SERVICE_NAME -n 100 --no-pager
-
-查看实时日志：
-  journalctl -u $SERVICE_NAME -f
-
-重新部署/更新：
-  cd $ROOT
-  bash scripts/deploy-snowluma.sh
+查看日志：
+  npm run service:logs
 EOF
