@@ -8,6 +8,7 @@ import {
   applyConfig,
   getConfig,
   loadConfig,
+  resetConfig,
   saveConfig,
   setConfigPath,
 } from './config.ts';
@@ -60,6 +61,7 @@ function prepareContext(ctx: NapCatPluginContext): NapCatContextLike {
 
 export const plugin_init: PluginModule['plugin_init'] = async (ctx) => {
   prepareContext(ctx);
+  resetConfig();
   plugin_config_ui = buildConfigSchema(ctx);
   const result = loadConfig();
   if (result?.invalid.length) {
