@@ -246,4 +246,14 @@ export class OneBotWsAdapter implements BotAdapter {
       messages: nodes,
     });
   }
+
+  async sendPrivateForwardMessage(
+    userId: Id,
+    nodes: ForwardNode[],
+  ): Promise<void> {
+    await this.call('send_private_forward_msg', {
+      user_id: String(userId),
+      messages: nodes,
+    });
+  }
 }
