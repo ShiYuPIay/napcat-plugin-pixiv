@@ -28,6 +28,7 @@ export interface BotAdapter {
   sendGroupMessage(groupId: Id, message: string | MessageSegment[]): Promise<void>;
   sendPrivateMessage(userId: Id, message: string | MessageSegment[]): Promise<void>;
   sendGroupForwardMessage(groupId: Id, nodes: ForwardNode[]): Promise<void>;
+  sendPrivateForwardMessage(userId: Id, nodes: ForwardNode[]): Promise<void>;
 }
 
 export interface LoggerLike {
