@@ -24,11 +24,15 @@ function itemSegments(item: PixivItem): MessageSegment[] {
 }
 
 function buildNode(item: PixivItem, selfId: Id | undefined): ForwardNode {
+  const nickname = item.author || 'Pixiv';
+  const userId = String(selfId ?? '10000');
   return {
     type: 'node',
     data: {
-      name: item.author || 'Pixiv',
-      uin: String(selfId ?? '10000'),
+      user_id: userId,
+      nickname,
+      uin: userId,
+      name: nickname,
       content: itemSegments(item),
     },
   };

@@ -69,10 +69,7 @@ const bot = new OneBotWsAdapter({
   maxReconnectDelayMs: 30_000,
 });
 
-bot.start(async (event) => {
-  if (event.post_type && event.post_type !== 'message') return;
-  await handleMessage(event, bot);
-});
+bot.start((event) => handleMessage(event, bot));
 
 log.info(`SnowLuma/OneBot 模式已启动，目标 ${connection.url}`);
 log.info(

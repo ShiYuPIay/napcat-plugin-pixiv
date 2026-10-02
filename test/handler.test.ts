@@ -130,3 +130,17 @@ test('unrelated text is ignored', async () => {
   assert.equal(bot.groupMessages.length, 0);
   assert.equal(bot.privateMessages.length, 0);
 });
+
+test('own sent messages and non-message events are never treated as commands', async () => {
+  const bot = new FakeBot();
+  for (const post_type of ['message_sent', 'meta_event', 'notice', 'request']) {
+    await handleMessage({
+      post_type,
+      message_type: 'group',
+      group_id: '1',
+      user_id: '2',
+      raw_message: '#pixivping',
+    }, bot);
+  }
+  assert.equal(bot.groupMessages.length, 0);
+});

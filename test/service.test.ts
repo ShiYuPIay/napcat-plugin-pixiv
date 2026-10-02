@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { applyConfig, resetConfig } from '../src/config.ts';
-import { applyContentPolicy } from '../src/services/providers/common.ts';
+import { applyContentPolicy, proxyImageUrl } from '../src/services/providers/common.ts';
 import { mapAppApiItem } from '../src/services/providers/hibi.ts';
 import { mapLoliconItem } from '../src/services/providers/lolicon.ts';
 
@@ -49,4 +49,24 @@ test('content policy filters R18, AI and blocked content by default', () => {
 
   applyConfig({ r18: 2, excludeAI: false });
   assert.deepEqual(applyContentPolicy(items).map((item) => item.pid), ['1', '2', '3']);
+});
+
+test('image URLs from upstream are limited to plain http(s) URLs', () => {
+  assert.equal(proxyImageUrl('https://i.pximg.net/a.jpg'), 'https://i.pixiv.re/a.jpg');
+  assert.equal(proxyImageUrl('https://cdn.example.com/a.jpg'), 'https://cdn.example.com/a.jpg');
+
+  // OneBot's image `file` field also accepts local paths and base64, so an
+  // untrusted upstream value of that kind must never reach it.
+  for (const hostile of [
+    'file:///etc/passwd',
+    '/etc/passwd',
+    'C:\\Windows\\win.ini',
+    'base64://AAAA',
+    'data:image/png;base64,AAAA',
+    '//i.pximg.net/a.jpg',
+    'javascript:alert(1)',
+  ]) {
+    assert.equal(proxyImageUrl(hostile), null, hostile);
+  }
+  assert.equal(proxyImageUrl(undefined), null);
 });

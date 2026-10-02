@@ -2,7 +2,7 @@
 
 > Pixiv 图片搜索与推荐插件，支持 **NapCat 原生插件模式** 与 **SnowLuma / OneBot v11 WebSocket 模式**。
 
-[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](./package.json)
+[![Version](https://img.shields.io/github/package-json/v/ShiYuPIay/napcat-plugin-pixiv?color=blue)](./package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.12.0-brightgreen.svg)](./package.json)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--only-orange.svg)](./LICENSE)
 
@@ -14,8 +14,6 @@
 
 - **NapCat 原生插件模式**：由 NapCat 插件生命周期直接加载，不需要插件自行连接 NapCat WebSocket。
 - **SnowLuma / OneBot v11 模式**：插件作为独立 Node.js 进程运行，通过 OneBot WebSocket 接收消息并调用 Action。
-
-当前版本：**1.4.0**
 
 作者：**ShiYuPIay**
 
@@ -80,6 +78,8 @@ npm run check
 
 `npm run check` 会依次执行 TypeScript 类型检查、测试和构建。
 
+> 在 Linux 上，如果同时满足：以 root 运行、存在 Docker 与 systemd、能找到 SnowLuma 容器，`check` 结束后的 `postcheck` 钩子还会迁移旧版 SnowLuma 配置、执行连接诊断，并安装/刷新 systemd 守护。只想做代码检查时请使用 `PIXIV_CHECK_ONLY=1 npm run check`；设置了 `CI` 环境变量时会自动跳过。
+
 ---
 
 ## 快速开始
@@ -107,6 +107,7 @@ dist/
 ├── index.mjs
 ├── snowluma.mjs
 ├── chunks/
+├── config.example.json
 ├── package.json
 ├── README.md
 └── LICENSE
@@ -163,11 +164,12 @@ bash scripts/deploy-snowluma.sh
 3. 固定 npm 到项目推荐版本。
 4. 安装依赖。
 5. 执行 `typecheck + test + build`。
-6. 检测 SnowLuma Docker 容器。
-7. 自动读取 OneBot 配置。
-8. 执行 WebSocket 鉴权和 `get_login_info` 诊断。
-9. 安装或更新 systemd 服务。
-10. 开启开机自启并启动插件。
+6. 迁移旧版名为 `Pixiv` 的 SnowLuma 反向 WebSocket 客户端配置（先备份；仅在发现旧配置时才会重启 SnowLuma 容器）。
+7. 检测 SnowLuma Docker 容器。
+8. 自动读取 OneBot 配置。
+9. 执行 WebSocket 鉴权和 `get_login_info` 诊断。
+10. 安装或更新 systemd 服务。
+11. 开启开机自启并启动插件。
 
 默认 SnowLuma Docker 容器名称为：
 
@@ -645,6 +647,7 @@ npm install-scripts ls
 
 ```text
 napcat-plugin-pixiv/
+├── .github/workflows/       # CI（类型检查、测试、构建、产物校验）
 ├── scripts/                 # SnowLuma 部署、systemd 管理脚本
 ├── src/
 │   ├── adapters/            # NapCat / OneBot 适配层
@@ -655,8 +658,10 @@ napcat-plugin-pixiv/
 │   ├── services/            # Pixiv / 上游 API 服务
 │   ├── config.ts            # 配置加载、校验与持久化
 │   ├── index.ts             # NapCat 原生插件入口
+│   ├── napcat-plugin-types.ts # NapCat 插件接口类型
 │   └── types.ts             # 项目类型定义
 ├── test/                    # 自动化测试
+├── config.example.json      # 配置示例
 ├── package.json
 ├── vite.config.ts
 ├── tsconfig.json

@@ -63,8 +63,8 @@ if [[ "$CURRENT_NPM" != "11.19.0" ]]; then
 fi
 npm -v
 
-log "安装依赖"
-npm install --no-audit --no-fund
+log "安装依赖（按 package-lock.json 精确安装，不改写已跟踪文件）"
+npm ci --no-audit --no-fund
 
 log "执行纯代码检查（不在此步骤启动守护，避免递归）"
 PIXIV_CHECK_ONLY=1 npm run check

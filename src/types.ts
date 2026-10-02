@@ -8,8 +8,12 @@ export interface MessageSegment {
 export interface ForwardNode {
   type: 'node';
   data: {
-    name: string;
+    /** OneBot v11 sender fields. NapCat's schema requires `nickname`. */
+    user_id: string;
+    nickname: string;
+    /** go-cqhttp aliases, kept for implementations that only read these. */
     uin: string;
+    name: string;
     content: MessageSegment[];
   };
 }
