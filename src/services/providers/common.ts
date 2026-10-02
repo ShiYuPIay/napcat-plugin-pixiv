@@ -5,17 +5,22 @@ export function proxyImageUrl(rawUrl: unknown): string | null {
   if (typeof rawUrl !== 'string' || !rawUrl) return null;
   const { imageProxy } = getConfig();
 
+  let url: URL;
   try {
-    const url = new URL(rawUrl);
-    if (url.hostname === 'i.pximg.net' && imageProxy) {
-      const [host, port] = imageProxy.split(':');
-      url.hostname = host;
-      if (port) url.port = port;
-    }
-    return url.toString();
+    url = new URL(rawUrl);
   } catch {
-    return rawUrl.replace('i.pximg.net', imageProxy);
+    return null;
   }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+
+  if (url.hostname === 'i.pximg.net' && imageProxy) {
+    const [host, port] = imageProxy.split(':');
+    url.hostname = host;
+    if (port) url.port = port;
+  }
+
+  return url.toString();
 }
 
 export function applyContentPolicy(items: PixivItem[]): PixivItem[] {

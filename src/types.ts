@@ -8,6 +8,8 @@ export interface MessageSegment {
 export interface ForwardNode {
   type: 'node';
   data: {
+    user_id?: string;
+    nickname?: string;
     name: string;
     uin: string;
     content: MessageSegment[];

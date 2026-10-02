@@ -10,7 +10,7 @@ import type {
 } from '../types.ts';
 
 function caption(item: PixivItem): string {
-  return `${item.title} - ${item.author}\npid: ${item.pid}`;
+  return `${item.title} - ${item.author}\\npid: ${item.pid}`;
 }
 
 function itemSegments(item: PixivItem): MessageSegment[] {
@@ -23,12 +23,17 @@ function itemSegments(item: PixivItem): MessageSegment[] {
   return content;
 }
 
-function buildNode(item: PixivItem, selfId: Id | undefined): ForwardNode {
+function buildNode(item: PixivItem, selfId: Id | undefined, userId: Id | undefined): ForwardNode {
+  const senderId = String(userId ?? selfId ?? '10000');
+  const nickname = item.author || 'Pixiv';
+
   return {
     type: 'node',
     data: {
-      name: item.author || 'Pixiv',
-      uin: String(selfId ?? '10000'),
+      user_id: senderId,
+      nickname,
+      uin: senderId,
+      name: nickname,
       content: itemSegments(item),
     },
   };
@@ -63,7 +68,7 @@ async function sendMergedForward(
   items: PixivItem[],
 ): Promise<void> {
   const target = requireTarget(event);
-  const nodes = items.map((item) => buildNode(item, event.self_id));
+  const nodes = items.map((item) => buildNode(item, event.self_id, event.user_id));
   if (target.type === 'group') {
     await bot.sendGroupForwardMessage(target.id, nodes);
   } else {
@@ -93,7 +98,7 @@ async function sendOne(
     if (!item.url) throw error;
     log.warn(`图片发送失败，降级为文字：${error instanceof Error ? error.message : String(error)}`);
     await sendMessage(bot, event, [
-      { type: 'text', data: { text: `${caption(item)}\nhttps://www.pixiv.net/artworks/${item.pid}` } },
+      { type: 'text', data: { text: `${caption(item)}\\nhttps://www.pixiv.net/artworks/${item.pid}` } },
     ]);
   }
 }
