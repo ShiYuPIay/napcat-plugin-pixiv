@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pixiv-ci-${{ github.workflow }}-${{ github.ref }}-${{ matrix.node }}
+  group: pixiv-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
           npm --version
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Verify install-script approvals
         run: npm install-scripts ls
@@ -60,3 +60,4 @@ jobs:
           test -f dist/snowluma.mjs
           test -f dist/package.json
           node -e "const p=require('./dist/package.json'); if(p.main!=='index.mjs'||p.license!=='AGPL-3.0-only') process.exit(1)"
+          node --input-type=module -e "const m=await import('./dist/index.mjs'); const hooks=['plugin_init','plugin_onmessage','plugin_cleanup','plugin_get_config','plugin_set_config','plugin_on_config_change']; const missing=hooks.filter((k)=>typeof m[k]!=='function'); if(missing.length){console.error('missing exports:',missing.join(', ')); process.exit(1)}"

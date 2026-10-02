@@ -24,7 +24,13 @@ export async function fetchJson<T>(
 
   try {
     return await response.json() as T;
-  } catch {
-    throw new Error(`${label} returned invalid JSON`);
+  } catch (error) {
+    // The timeout also covers reading the body, so a stalled or reset
+    // connection lands here too and must not be reported as bad JSON.
+    if (error instanceof SyntaxError) {
+      throw new Error(`${label} returned invalid JSON`);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label} request failed: ${message}`);
   }
 }

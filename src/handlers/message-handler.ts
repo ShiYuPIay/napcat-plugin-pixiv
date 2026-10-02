@@ -275,6 +275,10 @@ export async function handleMessage(
   const config = getConfig();
   if (!config.enabled) return;
 
+  // NapCat hands every OneBot event (message_sent, meta_event, ...) to
+  // plugin_onmessage; only real incoming messages can be commands.
+  if (originalEvent.post_type && originalEvent.post_type !== 'message') return;
+
   const event = normalizeEvent(originalEvent);
   if (!event) return;
 

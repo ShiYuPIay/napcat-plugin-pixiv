@@ -7,8 +7,10 @@ import type { ForwardNode, MessageEvent } from '../src/types.ts';
 const nodes: ForwardNode[] = [{
   type: 'node',
   data: {
-    name: 'Pixiv',
+    user_id: '10000',
+    nickname: 'Pixiv',
     uin: '10000',
+    name: 'Pixiv',
     content: [{ type: 'text', data: { text: 'demo' } }],
   },
 }];
