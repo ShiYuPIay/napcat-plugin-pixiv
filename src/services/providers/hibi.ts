@@ -63,12 +63,19 @@ function endpoint(path: string, params: Record<string, string>): string {
   return url.toString();
 }
 
-export async function fetchRanking(mode: 'day' | 'week' | 'month'): Promise<PixivItem[]> {
-  const json = await fetchJson<RankingResponse>(
-    'Pixiv ranking',
-    endpoint('rank', { mode, page: '1' }),
-  );
+async function requestList(
+  label: string,
+  path: string,
+  params: Record<string, string>,
+): Promise<AppApiIllust[]> {
+  const json = await fetchJson<RankingResponse>(label, endpoint(path, params));
   const items = json.illusts ?? json.data ?? [];
+  if (!Array.isArray(items)) throw new Error(`${label} returned malformed data`);
+  return items;
+}
+
+export async function fetchRanking(mode: 'day' | 'week' | 'month'): Promise<PixivItem[]> {
+  const items = await requestList('Pixiv ranking', 'rank', { mode, page: '1' });
   return applyContentPolicy(items.map(mapAppApiItem)).slice(0, getConfig().num);
 }
 
@@ -104,17 +111,10 @@ export async function fetchIllust(pid: string): Promise<PixivItem[]> {
 }
 
 export async function fetchMemberIllusts(uid: string): Promise<PixivItem[]> {
-  const json = await fetchJson<RankingResponse>(
-    'Pixiv member',
-    endpoint('member_illust', { id: uid }),
-  );
-  const items = json.illusts ?? json.data ?? [];
+  const items = await requestList('Pixiv member', 'member_illust', { id: uid });
   return applyContentPolicy(items.map(mapAppApiItem)).slice(0, getConfig().num);
 }
 
 export async function checkHibi(): Promise<void> {
-  await fetchJson<RankingResponse>(
-    'Pixiv ranking',
-    endpoint('rank', { mode: 'day', page: '1' }),
-  );
+  await requestList('Pixiv ranking', 'rank', { mode: 'day', page: '1' });
 }

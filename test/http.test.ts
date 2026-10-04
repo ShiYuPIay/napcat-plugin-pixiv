@@ -51,3 +51,40 @@ test('a timeout while reading the body is a request failure, not invalid JSON', 
     clearTimeout(keepAlive);
   }
 });
+
+test('an empty body is reported as invalid JSON', async () => {
+  stubFetch(async () => new Response('', { status: 200 }));
+  await assert.rejects(fetchJson('Lolicon', 'https://example.test/x'), /Lolicon returned invalid JSON/);
+});
+
+test('JSON that is not an object is rejected', async () => {
+  for (const body of ['null', '[]', '"text"', '42']) {
+    stubFetch(async () => new Response(body, { status: 200 }));
+    await assert.rejects(
+      fetchJson('Lolicon', 'https://example.test/x'),
+      /Lolicon returned an unexpected JSON payload/,
+      body,
+    );
+  }
+});
+
+test('an API-level error field fails the request with the upstream message', async () => {
+  const cases: Array<[unknown, RegExp]> = [
+    ['bad key', /Lolicon API error: bad key/],
+    [{ message: 'rate limited' }, /Lolicon API error: rate limited/],
+    [{ user_message: '作品已删除' }, /Lolicon API error: 作品已删除/],
+    [{}, /Lolicon API error: unknown error/],
+    [true, /Lolicon API error: unknown error/],
+  ];
+  for (const [error, pattern] of cases) {
+    stubFetch(async () => new Response(JSON.stringify({ error, data: [] }), { status: 200 }));
+    await assert.rejects(fetchJson('Lolicon', 'https://example.test/x'), pattern, JSON.stringify(error));
+  }
+});
+
+test('an empty or null error field is a successful response', async () => {
+  for (const error of ['', null, false]) {
+    stubFetch(async () => new Response(JSON.stringify({ error, data: [1] }), { status: 200 }));
+    assert.deepEqual(await fetchJson('Lolicon', 'https://example.test/x'), { error, data: [1] });
+  }
+});

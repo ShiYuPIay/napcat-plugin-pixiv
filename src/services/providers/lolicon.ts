@@ -17,7 +17,6 @@ interface LoliconItem {
 }
 
 interface LoliconResponse {
-  error?: string;
   data?: LoliconItem[];
 }
 
@@ -33,25 +32,29 @@ export function mapLoliconItem(item: LoliconItem): PixivItem {
   };
 }
 
+async function post(body: Record<string, unknown>): Promise<LoliconItem[]> {
+  const json = await fetchJson<LoliconResponse>('Lolicon', getConfig().loliconApi, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const data = json.data ?? [];
+  if (!Array.isArray(data)) throw new Error('Lolicon returned malformed data');
+  return data;
+}
+
 async function request(extra: Record<string, unknown> = {}): Promise<PixivItem[]> {
   const config = getConfig();
-  const body = {
+  const items = await post({
     r18: config.r18,
     num: config.num,
     size: ['regular'],
     excludeAI: config.excludeAI,
     proxy: config.imageProxy,
     ...extra,
-  };
-
-  const json = await fetchJson<LoliconResponse>('Lolicon', config.loliconApi, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
   });
-
-  if (json.error) throw new Error(`Lolicon API error: ${json.error}`);
-  return applyContentPolicy((json.data ?? []).map(mapLoliconItem));
+  return applyContentPolicy(items.map(mapLoliconItem));
 }
 
 export function fetchRecommend(): Promise<PixivItem[]> {
@@ -63,10 +66,5 @@ export function fetchSearch(keyword: string): Promise<PixivItem[]> {
 }
 
 export async function checkLolicon(): Promise<void> {
-  const config = getConfig();
-  await fetchJson<LoliconResponse>('Lolicon', config.loliconApi, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ num: 1, r18: 0 }),
-  });
+  await post({ num: 1, r18: 0 });
 }
