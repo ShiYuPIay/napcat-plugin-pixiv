@@ -11,6 +11,7 @@ import {
   isAdmin,
   isBlockedText,
   normalizeText,
+  reloadConfig,
   resetConfig,
   saveConfig,
   setConfigPath,
@@ -172,4 +173,10 @@ test('valid environment values still override the defaults', () => {
   assert.equal(getConfig().num, 7);
   assert.equal(getConfig().r18, 2);
   assert.equal(getConfig().excludeAI, false);
+});
+
+test('reloadConfig does nothing without a config file path', () => {
+  applyConfig({ num: 8 });
+  assert.deepEqual(reloadConfig(), { ok: false, reason: '未设置配置文件路径' });
+  assert.equal(getConfig().num, 8);
 });

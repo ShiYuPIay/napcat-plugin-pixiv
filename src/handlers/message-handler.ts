@@ -4,6 +4,7 @@ import {
   getConfig,
   isAdmin,
   isBlockedText,
+  reloadConfig,
   saveConfig,
 } from '../config.ts';
 import { checkCooldown, refundCooldown } from '../core/cooldown.ts';
@@ -32,6 +33,7 @@ function helpText(): string {
     `${prefix}日榜 / 周榜 / 月榜      排行榜 Top ${num}`,
     `${prefix}status                 上游接口连通性检查`,
     `${prefix}设置                   查看/修改配置（管理员）`,
+    `${prefix}重载                   重新读取配置文件（管理员）`,
     `${prefix}help / ${prefix}帮助   显示此帮助`,
     '',
     '群聊和私聊都支持。若完全无回复，请先在服务器运行 npm run doctor:snowluma。',
@@ -154,14 +156,30 @@ const SETTABLE: Record<string, keyof ReturnType<typeof getConfig>> = {
   cooldown: 'rateLimitSecs',
 };
 
+const R18_LABELS = ['关闭', '仅 R18', '混合'] as const;
+
+function formatValue(value: unknown): string {
+  return typeof value === 'boolean' ? (value ? 'on' : 'off') : String(value);
+}
+
 function settingsSummary(): string {
   const config = getConfig();
   return [
     '当前配置：',
-    `r18=${config.r18}  num=${config.num}  excludeai=${config.excludeAI ? 'on' : 'off'}`,
-    `forward=${config.enableForward ? 'on' : 'off'}  cooldown=${config.rateLimitSecs}s`,
+    `r18=${config.r18}（${R18_LABELS[config.r18]}）  num=${config.num}  excludeai=${formatValue(config.excludeAI)}`,
+    `forward=${formatValue(config.enableForward)}  cooldown=${config.rateLimitSecs}s`,
     `修改：${config.prefix}设置 <r18|num|excludeai|forward|cooldown> <值>`,
+    `重新读取配置文件：${config.prefix}重载`,
   ].join('\n');
+}
+
+async function requireAdmin(bot: BotAdapter, event: MessageEvent): Promise<boolean> {
+  if (isAdmin(event.user_id)) return true;
+  const message = getAdminUsers().length
+    ? '仅管理员可查看/修改插件配置'
+    : '未配置管理员：请先在 NapCat WebUI、config.json 或环境变量中设置 adminUsers';
+  await sendText(bot, event, message);
+  return false;
 }
 
 async function handleSettings(
@@ -169,13 +187,7 @@ async function handleSettings(
   event: MessageEvent,
   args: string,
 ): Promise<void> {
-  if (!isAdmin(event.user_id)) {
-    const message = getAdminUsers().length
-      ? '仅管理员可查看/修改插件配置'
-      : '未配置管理员：请先在 NapCat WebUI、config.json 或环境变量中设置 adminUsers';
-    await sendText(bot, event, message);
-    return;
-  }
+  if (!(await requireAdmin(bot, event))) return;
 
   const [rawKey, ...rest] = args.split(/\s+/).filter(Boolean);
   if (!rawKey) {
@@ -183,13 +195,15 @@ async function handleSettings(
     return;
   }
 
-  const key = SETTABLE[rawKey.toLowerCase()];
+  const name = rawKey.toLowerCase();
+  const key = Object.hasOwn(SETTABLE, name) ? SETTABLE[name] : undefined;
   const rawValue = rest.join(' ');
   if (!key || !rawValue) {
     await sendText(bot, event, settingsSummary());
     return;
   }
 
+  const before = getConfig()[key];
   const { applied } = applyConfig({ [key]: rawValue });
   if (!(key in applied)) {
     await sendText(bot, event, `无效配置值：${rawKey} = ${rawValue}`);
@@ -200,8 +214,21 @@ async function handleSettings(
   await sendText(
     bot,
     event,
-    `已更新 ${rawKey} = ${String(applied[key])}${persisted ? '' : '（配置文件写入失败，仅本次运行有效）'}`,
+    `已更新 ${rawKey}：${formatValue(before)} → ${formatValue(applied[key])}${persisted ? '' : '（配置文件写入失败，仅本次运行有效）'}`,
   );
+}
+
+async function handleReload(bot: BotAdapter, event: MessageEvent): Promise<void> {
+  if (!(await requireAdmin(bot, event))) return;
+
+  const result = reloadConfig();
+  if (!result.ok) {
+    await sendText(bot, event, `重载失败：${result.reason}`);
+    return;
+  }
+
+  const ignored = result.invalid.length ? `\n已忽略无效项：${result.invalid.join(', ')}` : '';
+  await sendText(bot, event, `配置已重载${ignored}\n${settingsSummary()}`);
 }
 
 async function routeNetworkCommand(
@@ -309,6 +336,11 @@ export async function handleMessage(
 
     if (suffix === '设置' || suffix.startsWith('设置 ')) {
       await handleSettings(bot, event, suffix.slice(2).trim());
+      return;
+    }
+
+    if (suffix === '重载') {
+      await handleReload(bot, event);
       return;
     }
 

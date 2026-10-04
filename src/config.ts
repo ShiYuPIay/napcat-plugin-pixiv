@@ -20,6 +20,7 @@ export const DEFAULT_CONFIG: Readonly<PluginConfig> = Object.freeze({
 
 let currentConfig: PluginConfig = { ...DEFAULT_CONFIG };
 let configFilePath: string | null = null;
+let environmentSource: NodeJS.ProcessEnv | null = null;
 
 // Number() would turn true, [1], null and '' into 1, 1, 0 and 0, so only real
 // numbers and plain decimal strings (" 7 " is fine) count as integers.
@@ -103,6 +104,7 @@ export function getConfig(): Readonly<PluginConfig> {
 
 export function resetConfig(): void {
   currentConfig = { ...DEFAULT_CONFIG };
+  environmentSource = null;
 }
 
 export function setConfigPath(path?: string | null): void {
@@ -178,8 +180,37 @@ export function saveConfig(
   }
 }
 
+type ReloadResult =
+  | { ok: true; invalid: string[] }
+  | { ok: false; reason: string };
+
+/**
+ * Re-reads the config file the way startup does: defaults, then the file, then
+ * PIXIV_* overrides. An unusable file leaves the running configuration untouched.
+ */
+export function reloadConfig(): ReloadResult {
+  if (!configFilePath) return { ok: false, reason: '未设置配置文件路径' };
+
+  let file: unknown;
+  try {
+    file = JSON.parse(readFileSync(configFilePath, 'utf8'));
+  } catch {
+    return { ok: false, reason: '配置文件不存在或不是有效 JSON，已保留当前配置' };
+  }
+  if (file === null || typeof file !== 'object' || Array.isArray(file)) {
+    return { ok: false, reason: '配置文件必须是 JSON 对象，已保留当前配置' };
+  }
+
+  const environment = environmentSource;
+  resetConfig();
+  const { invalid } = applyConfig(file as Record<string, unknown>);
+  if (environment) invalid.push(...applyEnvironment(environment));
+  return { ok: true, invalid };
+}
+
 /** Applies PIXIV_* overrides and returns the names of the variables that were rejected. */
 export function applyEnvironment(env: NodeJS.ProcessEnv = process.env): string[] {
+  environmentSource = env;
   const mapped: Record<string, unknown> = {};
   const variables = new Map<string, string>();
   const mappings: Array<[keyof PluginConfig, string]> = [
