@@ -10,10 +10,20 @@
 
 `napcat-plugin-pixiv` 为 QQ Bot 提供 Pixiv 插画搜索、随机推荐、PID 查询、画师作品、排行榜和多图合并转发等能力。
 
-项目当前同时支持两种运行方式：
+项目有两种运行方式，**当前受支持的是外部 WebSocket 模式**：
 
-- **NapCat 原生插件模式**：由 NapCat 插件生命周期直接加载，不需要插件自行连接 NapCat WebSocket。
-- **SnowLuma / OneBot v11 模式**：插件作为独立 Node.js 进程运行，通过 OneBot WebSocket 接收消息并调用 Action。
+| 模式 | 状态 | 说明 |
+|---|---|---|
+| **外部 WebSocket 模式**（`dist/snowluma.mjs`） | ✅ 推荐 / 当前受支持 | 插件作为独立 Node.js 进程运行，主动连接 OneBot v11 WebSocket 服务端（SnowLuma，或开启了「WebSocket 服务器」的 NapCat），不经过 NapCat 的插件加载器 |
+| **NapCat 原生插件模式**（`dist/index.mjs`） | ⚠️ Legacy / 兼容模式 | 由 NapCat 插件加载器加载。NapCat `4.18.6` 起加载器只放行官方白名单插件 ID，未经修改的新版 NapCat 会拒绝加载本插件 |
+
+> **NapCat 原生模式兼容性（已对照上游源码核实）**
+>
+> NapCat `v4.18.6` 起，`packages/napcat-onebot/network/plugin/loader.ts` 内置官方插件 ID 白名单（目前为 `napcat-plugin-builtin`、`napcat-plugin-cleaner`、`napcat-plugin-ssqq`、`napcat-plugin-qce`），不在表内的插件不会被加载，日志形如 `[PluginLoader] Rejected napcat-plugin-pixiv (<目录名>): not in official plugin whitelist`（`v4.18.6` 首次引入时的原因文本是 `non-official plugin (not in whitelist)`）。插件 ID 取自 `package.json` 的 `name`，本插件不在白名单内。截至 2026-09-29 的 `main` 分支该限制仍然存在，源码中没有关闭它的配置项。
+>
+> - 本项目不会、也不应该绕过或修改 NapCat 的加载器。
+> - 官方插件市场或社区插件索引只负责分发，**不会**改变加载器的判定；通过它们下载本插件并不意味着 NapCat 会加载它。
+> - `v4.18.5` 及更早版本没有这个白名单；原生模式在这些版本上是否可用取决于具体环境，本仓库的自动化测试只覆盖适配层，没有在真实 NapCat 中验证。
 
 作者：**ShiYuPIay**
 
@@ -54,7 +64,8 @@
 | Node.js | `>= 22.12.0` |
 | npm | `>= 11.18.0` |
 | 推荐 npm | `11.19.0` |
-| NapCat | `>= 4.14.0` |
+| NapCat（外部模式） | 在网络配置中新建 OneBot v11「WebSocket 服务器」 |
+| NapCat（原生模式，Legacy） | `>= 4.14.0`，且加载器须放行本插件（见上文兼容性说明） |
 | SnowLuma | OneBot v11 WebSocket 可用 |
 | Linux SnowLuma 自动部署 | Docker + systemd |
 
@@ -84,56 +95,11 @@ npm run check
 
 ## 快速开始
 
-### 方式一：NapCat 原生插件模式
+### 方式一：外部 WebSocket 模式（推荐，当前受支持）
 
-克隆项目：
+插件作为独立进程运行，主动连接 OneBot v11 WebSocket 服务端。SnowLuma 与本插件在同一台 Linux 主机、且使用 Docker 时，可以直接用下面的一键部署；连接 NapCat、远程服务端或自定义地址，请看「手动指定 WebSocket 地址」一节。
 
-```bash
-git clone https://github.com/ShiYuPIay/napcat-plugin-pixiv.git
-cd napcat-plugin-pixiv
-```
-
-安装依赖并构建：
-
-```bash
-npm install
-npm run check
-```
-
-构建完成后会生成：
-
-```text
-dist/
-├── index.mjs
-├── snowluma.mjs
-├── chunks/
-├── config.example.json
-├── package.json
-├── README.md
-└── LICENSE
-```
-
-将 `dist/` 中的插件文件部署到 NapCat 插件目录，例如：
-
-```text
-<NAPCAT_PLUGIN_DIR>/napcat-plugin-pixiv/
-```
-
-然后在 NapCat 中加载或重载插件。
-
-NapCat 原生模式下，插件直接使用 NapCat 提供的插件上下文与 OneBot Action，不需要再配置 `ONEBOT_WS_URL`。
-
-首次验收建议发送：
-
-```text
-#pixivping
-```
-
-如果机器人回复 Pixiv 插件在线，说明消息收发链路正常。
-
----
-
-### 方式二：SnowLuma Docker 一键部署
+#### SnowLuma Docker 一键部署
 
 适用于 SnowLuma 与本插件运行在同一台 Linux 主机，并且 SnowLuma 使用 Docker 的场景。
 
@@ -199,6 +165,55 @@ SNOWLUMA_UIN=<BOT_QQ> npm run deploy:snowluma
 
 部署完成后，可以断开 SSH，systemd 会继续守护插件进程。
 
+### 方式二：NapCat 原生插件模式（Legacy / 兼容模式）
+
+> ⚠️ 未经修改的 NapCat `4.18.6+` 会拒绝加载第三方插件（见「项目简介」中的兼容性说明），此时请使用上面的外部 WebSocket 模式。以下步骤仅适用于加载器仍会放行本插件的环境。
+
+克隆项目：
+
+```bash
+git clone https://github.com/ShiYuPIay/napcat-plugin-pixiv.git
+cd napcat-plugin-pixiv
+```
+
+安装依赖并构建：
+
+```bash
+npm install
+npm run check
+```
+
+构建完成后会生成：
+
+```text
+dist/
+├── index.mjs
+├── snowluma.mjs
+├── chunks/
+├── config.example.json
+├── package.json
+├── README.md
+└── LICENSE
+```
+
+将 `dist/` 中的插件文件部署到 NapCat 插件目录（必须包含 `chunks/`，`index.mjs` 依赖其中的共用代码），例如：
+
+```text
+<NAPCAT_PLUGIN_DIR>/napcat-plugin-pixiv/
+```
+
+然后在 NapCat 中加载或重载插件。
+
+NapCat 原生模式下，插件直接使用 NapCat 提供的插件上下文与 OneBot Action，不需要再配置 `ONEBOT_WS_URL`。
+
+首次验收建议发送：
+
+```text
+#pixivping
+```
+
+如果机器人回复 Pixiv 插件在线，说明消息收发链路正常。
+
 ---
 
 ## SnowLuma 自动发现
@@ -234,34 +249,41 @@ SNOWLUMA_UIN=<BOT_QQ> npm run doctor:snowluma
 
 ---
 
-## 远程 / 非 Docker SnowLuma
+## 手动指定 WebSocket 地址（NapCat / 远程 SnowLuma / 其他 OneBot v11 服务端）
 
-自动发现主要面向本机 Docker。
+自动发现只面向本机 Docker 里的 SnowLuma。其他情况（NapCat、远程服务端、自定义端口）直接指定 WebSocket 地址。
 
-远程 SnowLuma 或自定义 OneBot WebSocket 可以手动设置：
+**连接 NapCat：** 在 NapCat WebUI 的「网络配置」里新建一个「WebSocket 服务器」（公网部署务必设置 Token；消息格式 `array` 与 `string` 都能识别），然后：
 
 ```bash
-export ONEBOT_WS_URL='ws://127.0.0.1:3001/'
-export ONEBOT_ACCESS_TOKEN='<ONEBOT_ACCESS_TOKEN>'
+export NAPCAT_WS_URL='ws://127.0.0.1:3001/'
+export NAPCAT_WS_TOKEN='<ONEBOT_ACCESS_TOKEN>'
 node dist/snowluma.mjs
 ```
 
-兼容的环境变量名称：
+地址、端口和 Token 以你在 NapCat 中的配置为准。验证连接（不启动服务）：`node dist/snowluma.mjs --doctor`，通过时输出 `✅ SnowLuma 连接诊断通过`，失败时退出码为 1。
 
-```text
-SNOWLUMA_WS_URL
-SNOWLUMA_TOKEN
-NAPCAT_WS_URL
-NAPCAT_WS_TOKEN
-```
+请将 `<ONEBOT_ACCESS_TOKEN>` 替换为你自己的 Token，**不要把真实 Token 写进 README、Issue、截图、日志示例或公开提交**。
 
-请将：
+### 外部模式使用的环境变量
 
-```text
-<ONEBOT_ACCESS_TOKEN>
-```
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `ONEBOT_WS_URL`、`SNOWLUMA_WS_URL`、`NAPCAT_WS_URL` | 自动发现，否则 `ws://127.0.0.1:3001/` | WebSocket 地址，按此顺序取第一个非空值 |
+| `ONEBOT_ACCESS_TOKEN`、`SNOWLUMA_TOKEN`、`NAPCAT_WS_TOKEN` | 自动发现，否则空 | Access Token，同样按顺序取第一个非空值，以 `access_token` 查询参数发送 |
+| `ONEBOT_REQUEST_TIMEOUT_MS` | `30000` | 单个 OneBot Action 的超时（整数毫秒，实际不低于 1000）；无效值会被忽略并记录警告 |
+| `PIXIV_CONFIG_FILE` | `./config.json` | 配置文件路径，相对于进程的当前目录 |
+| `SNOWLUMA_CONTAINER` | `snowluma` | 自动发现与部署脚本使用的 Docker 容器名 |
+| `SNOWLUMA_UIN` | 空 | 多 QQ 账号时指定机器人 QQ |
+| `SNOWLUMA_DOCTOR_ATTEMPTS` | `6` | `npm run doctor:snowluma` 与部署脚本的最大诊断次数（正整数） |
+| `SNOWLUMA_DOCTOR_DELAY_MS` | `5000` | 两次诊断之间的等待（整数毫秒，实际不低于 1000） |
 
-替换为你自己的 Token，**不要把真实 Token 写进 README、Issue、截图、日志示例或公开提交**。
+适用范围：
+
+- 上表变量只被 `dist/snowluma.mjs` 和部署脚本读取；原生模式不使用它们，原生模式的配置文件路径由 NapCat 提供。
+- 带 `--auto` 运行时（`npm run start:snowluma`、`npm run doctor:snowluma` 和 systemd 守护都是如此）只做 Docker 自动发现，会忽略地址与 Token 变量。需要手动地址时不要加 `--auto`。
+- 只设置了地址、没有设置 Token 时：只有地址指向本机回环（`localhost`、`127.x.x.x`、`::1`）才会沿用自动发现的 Token；指向其他主机必须显式设置 Token，本机 Token 不会被发送给远程服务端。
+- 部署脚本还会读取 `PIXIV_BRANCH`（要部署的分支，默认 `main`）；`PIXIV_CHECK_ONLY=1` 或设置了 `CI` 时，`npm run check` 不会安装守护。
 
 ---
 
@@ -286,7 +308,8 @@ NAPCAT_WS_TOKEN
 | `#pixiv周榜` | Pixiv 周榜 |
 | `#pixiv月榜` | Pixiv 月榜 |
 | `#pixivstatus` | 检查上游接口状态 |
-| `#pixiv设置` | 管理员查看或修改配置 |
+| `#pixiv设置` | 管理员查看或修改配置（修改后显示 `旧值 → 新值`） |
+| `#pixiv重载` | 管理员重新读取配置文件 |
 | `#pixivhelp` | 显示帮助 |
 | `#pixiv帮助` | 显示帮助 |
 
@@ -384,6 +407,8 @@ NapCat 原生插件模式支持通过 WebUI 修改配置，包括：
 | `imageProxy` | `i.pixiv.re` | Pixiv 图片反代 |
 | `requestTimeoutMs` | `8000` | 请求超时，范围 `1000~60000` ms |
 
+整数类配置项（`r18`、`num`、`rateLimitSecs`、`requestTimeoutMs`）只接受整数或纯数字字符串，例如 `8`、`"8"`、`" 7 "`；`true`、`[1]`、空串、`null`、小数、`0x10` 等一律拒绝，不会被悄悄当成 0 或 1。`rateLimitSecs=0` 是关闭冷却的唯一方式。布尔项接受 `true/false`、`on/off`、`yes/no`、`1/0`、`是/否`、`开/关`。
+
 管理员示例请使用脱敏占位符：
 
 ```text
@@ -392,9 +417,9 @@ NapCat 原生插件模式支持通过 WebUI 修改配置，包括：
 
 不要把真实管理员账号写入公开文档。
 
-### 环境变量
+### 环境变量（仅外部 WebSocket 模式）
 
-支持：
+下列变量只在外部模式启动时读取，原生模式使用 NapCat WebUI 和配置文件：
 
 ```text
 PIXIV_ENABLED
@@ -411,6 +436,10 @@ PIXIV_HIBI_API
 PIXIV_IMAGE_PROXY
 PIXIV_REQUEST_TIMEOUT_MS
 ```
+
+生效顺序是：内置默认值 → 配置文件 → 环境变量，后者覆盖前者。因此被环境变量设置的项，用 `#pixiv设置` 修改后只会写入配置文件，重启或 `#pixiv重载` 之后又会被环境变量覆盖。
+
+取值不合法的变量会被忽略，并在启动日志里列出变量名（不打印取值），例如 `已忽略取值无效的环境变量：PIXIV_NUM`。
 
 自定义配置文件：
 
@@ -441,7 +470,11 @@ PIXIV_CONFIG_FILE=/srv/napcat-plugin-pixiv/config.json
 #pixiv设置 cooldown 15
 ```
 
-只有 `adminUsers` 中的 QQ 才允许查看或修改这些配置。
+只有 `adminUsers` 中的 QQ 才允许查看或修改这些配置；未配置任何管理员时，所有人都会被拒绝。
+
+- 修改成功会回复 `已更新 num：5 → 8`；值不合法时回复 `无效配置值`，不会写入配置文件；配置文件写入失败时会注明「仅本次运行有效」。
+- `#pixiv设置` 的回复只包含上述 5 个设置项，不含管理员 QQ、上游地址等信息。
+- 手动修改配置文件后，管理员发送 `#pixiv重载` 重新读取，顺序与启动时一致（默认值 → 配置文件 → 环境变量）。文件不存在或 JSON 无效时保留当前配置并说明原因。
 
 ---
 
@@ -565,7 +598,19 @@ PIXIV_REQUEST_TIMEOUT_MS
 
 第三方 API 可能发生限流、故障、地区网络问题或接口变更，本项目无法保证第三方服务永久可用。
 
-------
+### 4. NapCat 日志出现 `Rejected napcat-plugin-pixiv ... whitelist`
+
+这是 NapCat `4.18.6+` 加载器对第三方插件的限制，见「项目简介」中的兼容性说明。请改用外部 WebSocket 模式（`NAPCAT_WS_URL` / `NAPCAT_WS_TOKEN`）。
+
+### 5. 日志提示「已忽略取值无效的环境变量」
+
+对应变量的取值不合法（例如 `PIXIV_NUM=abc`，或变量存在但为空），已沿用配置文件或默认值。修正取值后重启即可。
+
+### 6. 日志提示「未关联请求的失败响应」/ retcode 1403
+
+服务端拒绝了 Token。核对 `NAPCAT_WS_TOKEN`（或 `ONEBOT_ACCESS_TOKEN`）与服务端配置是否一致；插件会以递增间隔重试，不会每秒重连。
+
+---
 
 ## 隐私说明
 
@@ -696,10 +741,11 @@ napcat-plugin-pixiv/
 ## 相关文档
 
 - NapCat 插件开发：<https://napneko.github.io/develop/plugin/>
-- NapCat 插件发布：<https://napneko.github.io/develop/plugin/publish>
-- SnowLuma：<https://snowluma.github.io/>
-- SnowLuma Docker 部署：<https://snowluma.github.io/guide/deploy/docker.html>
-- SnowLuma 配置参考：<https://snowluma.github.io/guide/configuration.html>
+- NapCat 插件发布：<https://napneko.github.io/develop/plugin/publish>（描述的是官方插件索引流程，不代表加载器会放行第三方插件）
+- NapCat 插件加载器白名单源码：<https://github.com/NapNeko/NapCatQQ/blob/main/packages/napcat-onebot/network/plugin/loader.ts>
+- SnowLuma：<https://snowluma.github.io/zh/>
+- SnowLuma Docker 部署：<https://snowluma.github.io/zh/docs/guide/deploy/docker>
+- SnowLuma 配置参考：<https://snowluma.github.io/zh/docs/guide/configuration>
 
 ---
 
