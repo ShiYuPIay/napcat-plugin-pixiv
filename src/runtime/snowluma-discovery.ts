@@ -248,6 +248,15 @@ function firstEnv(env: NodeJS.ProcessEnv, names: string[]): string | undefined {
   return undefined;
 }
 
+export function isLoopbackUrl(value: string): boolean {
+  try {
+    const host = new URL(value).hostname;
+    return host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host);
+  } catch {
+    return false;
+  }
+}
+
 export function resolveSnowLumaConnection(
   options: { forceDocker?: boolean; env?: NodeJS.ProcessEnv } = {},
 ): SnowLumaConnection {
@@ -268,9 +277,13 @@ export function resolveSnowLumaConnection(
     }
   }
 
+  // The discovered token belongs to the local SnowLuma: never hand it to an
+  // explicit URL that points at another host.
+  const inheritedToken = explicitUrl && !isLoopbackUrl(explicitUrl) ? undefined : discovered?.accessToken;
+
   return {
     url: explicitUrl ?? discovered?.url ?? 'ws://127.0.0.1:3001/',
-    accessToken: explicitToken ?? discovered?.accessToken ?? '',
+    accessToken: explicitToken ?? inheritedToken ?? '',
     source: explicitUrl || explicitToken
       ? `环境变量${discovered ? ' + Docker 自动补全' : ''}`
       : discovered?.source ?? '默认配置',
