@@ -55,7 +55,7 @@ function normalizeCommandCandidate(value: string): string {
     .trim();
 }
 
-export function extractMessageText(event: MessageEvent): string {
+function extractMessageText(event: MessageEvent): string {
   if (Array.isArray(event.message)) {
     const text = plainTextFromSegments(event.message);
     if (text.trim()) return normalizeCommandCandidate(text);

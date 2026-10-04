@@ -111,10 +111,6 @@ export function setConfigPath(path?: string | null): void {
   configFilePath = path ? resolve(path) : null;
 }
 
-export function getConfigPath(): string | null {
-  return configFilePath;
-}
-
 export function applyConfig(
   partial: Record<string, unknown> | null | undefined,
 ): { applied: Partial<PluginConfig>; invalid: string[] } {

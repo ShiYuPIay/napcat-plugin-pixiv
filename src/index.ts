@@ -14,7 +14,7 @@ import {
 } from './config.ts';
 import { bindLogger, log } from './core/logger.ts';
 import { handleMessage } from './handlers/message-handler.ts';
-import type { MessageEvent, PluginConfig } from './types.ts';
+import type { MessageEvent } from './types.ts';
 
 export let plugin_config_ui: PluginConfigSchema = [];
 
@@ -106,5 +106,3 @@ export const plugin_cleanup: PluginModule['plugin_cleanup'] = async (ctx) => {
   log.info('Pixiv 插件已卸载');
   bindLogger(null);
 };
-
-export type { PluginConfig };

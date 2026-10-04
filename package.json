@@ -40,7 +40,6 @@
     "check:ci": "npm run typecheck && npm test && npm run build",
     "check": "npm run check:ci",
     "postcheck": "node scripts/postcheck-snowluma.mjs",
-    "setup:snowluma": "npm run doctor:snowluma",
     "doctor:snowluma": "npm run build && node scripts/doctor-snowluma-retry.mjs",
     "start:snowluma": "npm run build && node dist/snowluma.mjs --auto",
     "deploy:snowluma": "bash scripts/deploy-snowluma.sh",

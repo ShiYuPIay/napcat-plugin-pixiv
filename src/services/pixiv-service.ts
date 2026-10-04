@@ -1,4 +1,3 @@
-import type { PixivItem } from '../types.ts';
 import {
   checkHibi,
   fetchIllust,
@@ -36,5 +35,3 @@ export async function checkApis(): Promise<string> {
   ]);
   return results.join('\n');
 }
-
-export type { PixivItem };

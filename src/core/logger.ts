@@ -7,7 +7,7 @@ export function bindLogger(logger?: LoggerLike | null): void {
   boundLogger = logger ?? null;
 }
 
-function emit(level: 'info' | 'warn' | 'error' | 'debug', message: string): void {
+function emit(level: 'info' | 'warn' | 'error', message: string): void {
   const logger = boundLogger;
   if (logger) {
     const fn =
@@ -22,7 +22,6 @@ function emit(level: 'info' | 'warn' | 'error' | 'debug', message: string): void
   const fallback =
     level === 'error' ? console.error :
     level === 'warn' ? console.warn :
-    level === 'debug' ? console.debug :
     console.log;
   fallback(`${TAG} ${message}`);
 }
@@ -31,5 +30,4 @@ export const log = {
   info: (message: string) => emit('info', message),
   warn: (message: string) => emit('warn', message),
   error: (message: string) => emit('error', message),
-  debug: (message: string) => emit('debug', message),
 };
