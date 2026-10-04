@@ -43,7 +43,9 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Verify install-script approvals
-        run: npm install-scripts ls
+        run: |
+          npm install-scripts ls | tee "$RUNNER_TEMP/install-scripts.txt"
+          grep -qx 'No packages with unreviewed install scripts\.' "$RUNNER_TEMP/install-scripts.txt"
 
       - name: Typecheck
         run: npm run typecheck
