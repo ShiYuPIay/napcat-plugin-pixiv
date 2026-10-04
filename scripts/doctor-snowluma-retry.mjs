@@ -2,8 +2,16 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
-const attempts = Math.max(1, Number(process.env.SNOWLUMA_DOCTOR_ATTEMPTS || 6));
-const delayMs = Math.max(1_000, Number(process.env.SNOWLUMA_DOCTOR_DELAY_MS || 5_000));
+function integerFromEnv(name, fallback, min) {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  if (/^\d+$/.test(raw)) return Math.max(min, Number(raw));
+  console.warn(`[napcat-plugin-pixiv] 已忽略无效的 ${name}（需为整数），改用默认值 ${fallback}`);
+  return fallback;
+}
+
+const attempts = integerFromEnv('SNOWLUMA_DOCTOR_ATTEMPTS', 6, 1);
+const delayMs = integerFromEnv('SNOWLUMA_DOCTOR_DELAY_MS', 5_000, 1_000);
 const entry = resolve(process.cwd(), 'dist/snowluma.mjs');
 
 function sleep(ms) {

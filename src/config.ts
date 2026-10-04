@@ -21,14 +21,24 @@ export const DEFAULT_CONFIG: Readonly<PluginConfig> = Object.freeze({
 let currentConfig: PluginConfig = { ...DEFAULT_CONFIG };
 let configFilePath: string | null = null;
 
+// Number() would turn true, [1], null and '' into 1, 1, 0 and 0, so only real
+// numbers and plain decimal strings (" 7 " is fine) count as integers.
 function toInteger(value: unknown): number | null {
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? Math.trunc(numberValue) : null;
+  let parsed = Number.NaN;
+  if (typeof value === 'number') {
+    parsed = value;
+  } else if (typeof value === 'string' && /^[+-]?\d+$/.test(value.trim())) {
+    parsed = Number(value.trim());
+  }
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 function toBoolean(value: unknown): boolean | null {
   if (typeof value === 'boolean') return value;
-  const normalized = String(value ?? '').trim().toLowerCase();
+  if (value === 1) return true;
+  if (value === 0) return false;
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
   if (['true', '1', 'on', 'yes', '是', '开'].includes(normalized)) return true;
   if (['false', '0', 'off', 'no', '否', '关'].includes(normalized)) return false;
   return null;
@@ -110,7 +120,7 @@ export function applyConfig(
   const invalid: string[] = [];
 
   for (const [rawKey, rawValue] of Object.entries(partial ?? {})) {
-    if (!(rawKey in validators)) {
+    if (!Object.hasOwn(validators, rawKey)) {
       invalid.push(rawKey);
       continue;
     }
@@ -168,8 +178,10 @@ export function saveConfig(
   }
 }
 
-export function applyEnvironment(env: NodeJS.ProcessEnv = process.env): void {
+/** Applies PIXIV_* overrides and returns the names of the variables that were rejected. */
+export function applyEnvironment(env: NodeJS.ProcessEnv = process.env): string[] {
   const mapped: Record<string, unknown> = {};
+  const variables = new Map<string, string>();
   const mappings: Array<[keyof PluginConfig, string]> = [
     ['enabled', 'PIXIV_ENABLED'],
     ['prefix', 'PIXIV_PREFIX'],
@@ -187,9 +199,11 @@ export function applyEnvironment(env: NodeJS.ProcessEnv = process.env): void {
   ];
 
   for (const [key, variable] of mappings) {
-    if (env[variable] !== undefined) mapped[key] = env[variable];
+    if (env[variable] === undefined) continue;
+    mapped[key] = env[variable];
+    variables.set(key, variable);
   }
-  applyConfig(mapped);
+  return applyConfig(mapped).invalid.map((key) => variables.get(key) ?? key);
 }
 
 export function normalizeText(value: unknown): string {

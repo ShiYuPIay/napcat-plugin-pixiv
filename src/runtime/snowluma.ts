@@ -46,7 +46,10 @@ function configurePixiv(): void {
     log.info(`Pixiv 配置文件已加载：${configPath}`);
   }
 
-  applyEnvironment();
+  const rejected = applyEnvironment();
+  if (rejected.length > 0) {
+    log.warn(`已忽略取值无效的环境变量：${rejected.join(', ')}（沿用配置文件或默认值）`);
+  }
 }
 
 configurePixiv();
@@ -60,11 +63,18 @@ try {
   process.exit(2);
 }
 
-const requestTimeoutMs = Number(process.env.ONEBOT_REQUEST_TIMEOUT_MS || 30_000);
+function requestTimeoutFromEnv(): number {
+  const raw = process.env.ONEBOT_REQUEST_TIMEOUT_MS?.trim();
+  if (!raw) return 30_000;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  log.warn('已忽略无效的 ONEBOT_REQUEST_TIMEOUT_MS（需为整数毫秒），改用 30000');
+  return 30_000;
+}
+
 const bot = new OneBotWsAdapter({
   url: connection.url,
   accessToken: connection.accessToken,
-  requestTimeoutMs: Number.isFinite(requestTimeoutMs) ? requestTimeoutMs : 30_000,
+  requestTimeoutMs: requestTimeoutFromEnv(),
   minReconnectDelayMs: 1_000,
   maxReconnectDelayMs: 30_000,
 });
