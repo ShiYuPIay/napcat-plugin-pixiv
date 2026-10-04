@@ -22,6 +22,9 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+// A connection must stay up this long before the reconnect backoff starts over.
+const STABLE_CONNECTION_MS = 10_000;
+
 export interface OneBotWsOptions {
   url: string;
   accessToken?: string;
@@ -36,6 +39,7 @@ export class OneBotWsAdapter implements BotAdapter {
   private stopped = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
+  private openedAt: number | null = null;
   private echoCounter = 0;
   private readonly pending = new Map<string, PendingRequest>();
   private eventHandler: ((event: MessageEvent) => void | Promise<void>) | null = null;
@@ -96,6 +100,13 @@ export class OneBotWsAdapter implements BotAdapter {
     const onDisconnect = (code: number, reason = ''): void => {
       if (this.socket !== socket) return;
       this.socket = null;
+      // Only a connection that stayed up restarts the backoff. NapCat accepts
+      // the upgrade and drops the socket again when the token is wrong, which
+      // must not turn into a retry every second.
+      if (this.openedAt !== null && Date.now() - this.openedAt >= STABLE_CONNECTION_MS) {
+        this.reconnectAttempt = 0;
+      }
+      this.openedAt = null;
       const detail = reason ? `，原因：${reason}` : '';
       this.rejectPending(new Error(`OneBot WebSocket closed (${code}${detail})`));
       if (this.stopped) return;
@@ -107,7 +118,7 @@ export class OneBotWsAdapter implements BotAdapter {
     };
 
     socket.addEventListener('open', () => {
-      this.reconnectAttempt = 0;
+      this.openedAt = Date.now();
       log.info(`OneBot WebSocket 已连接：${this.options.url}`);
     });
 
@@ -170,6 +181,17 @@ export class OneBotWsAdapter implements BotAdapter {
       return;
     }
     const payload = parsed as OneBotResponse & MessageEvent;
+
+    if (payload.status === 'failed' && (payload.echo === undefined || payload.echo === null)) {
+      // NapCat answers a wrong token after the upgrade with an unsolicited
+      // { status: 'failed', retcode: 1403 } frame and then closes the socket.
+      const reason = payload.wording || payload.message || `retcode ${payload.retcode}`;
+      const hint = payload.retcode === 1403
+        ? '；请检查 NAPCAT_WS_TOKEN / ONEBOT_ACCESS_TOKEN 是否与服务端 token 一致'
+        : '';
+      log.error(`OneBot 服务器返回了未关联请求的失败响应：${reason}${hint}`);
+      return;
+    }
 
     if (payload.echo !== undefined) {
       const key = String(payload.echo);

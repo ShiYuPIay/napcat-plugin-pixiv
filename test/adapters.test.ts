@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { NapCatAdapter } from '../src/adapters/napcat-adapter.ts';
 import { OneBotWsAdapter } from '../src/adapters/onebot-ws-adapter.ts';
+import { bindLogger } from '../src/core/logger.ts';
 import type { ForwardNode, MessageEvent } from '../src/types.ts';
 
 const nodes: ForwardNode[] = [{
@@ -348,4 +349,86 @@ test('a failed OneBot action rejects with the server wording', async () => {
     await assert.rejects(bot.sendGroupMessage(1, 'hello'), /bad group/);
     bot.stop();
   });
+});
+
+class FlappingWebSocket extends FakeWebSocket {
+  protected override handshake(): void {
+    super.handshake();
+    this.close(1005);
+  }
+}
+
+test('a server that accepts and immediately drops the socket is retried with a growing delay', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  await withWebSocket(FlappingWebSocket, async () => {
+    const bot = new OneBotWsAdapter({
+      url: 'ws://127.0.0.1:3001/',
+      minReconnectDelayMs: 1_000,
+      maxReconnectDelayMs: 30_000,
+    });
+    bot.start(() => {});
+    await flush();
+    assert.equal(FakeWebSocket.created, 1);
+
+    t.mock.timers.tick(1_100);
+    await flush();
+    assert.equal(FakeWebSocket.created, 2, 'first retry after about 1s');
+
+    // 1.5s is past the first delay (1.0-1.1s) but short of the doubled one (1.8-2.2s).
+    t.mock.timers.tick(1_500);
+    await flush();
+    assert.equal(FakeWebSocket.created, 2, 'second retry must wait about 2s, not 1s');
+
+    t.mock.timers.tick(800);
+    await flush();
+    assert.equal(FakeWebSocket.created, 3);
+    bot.stop();
+  });
+});
+
+test('a connection that stayed up starts the backoff over', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  await withWebSocket(FakeWebSocket, async () => {
+    const bot = new OneBotWsAdapter({
+      url: 'ws://127.0.0.1:3001/',
+      minReconnectDelayMs: 1_000,
+      maxReconnectDelayMs: 30_000,
+    });
+    bot.start(() => {});
+    await flush();
+
+    for (let round = 2; round <= 4; round += 1) {
+      t.mock.timers.tick(11_000); // stays up longer than the stability window
+      FakeWebSocket.latest?.close(1011);
+      t.mock.timers.tick(1_100);
+      await flush();
+      assert.equal(FakeWebSocket.created, round, `reconnect ${round} should be about 1s after a healthy connection`);
+    }
+    bot.stop();
+  });
+});
+
+test('an unsolicited failed frame (NapCat token rejection) is reported with an actionable hint', async () => {
+  const errors: string[] = [];
+  bindLogger({ error: (message) => errors.push(message), warn: () => {}, info: () => {} });
+  try {
+    await withWebSocket(FakeWebSocket, async () => {
+      const bot = new OneBotWsAdapter({ url: 'ws://127.0.0.1:3001/' });
+      bot.start(() => {});
+      await flush();
+
+      FakeWebSocket.latest?.emitRaw(JSON.stringify({
+        status: 'failed', retcode: 1403, data: null, message: 'token验证失败', wording: 'token验证失败', echo: null,
+      }));
+      await flush();
+
+      assert.equal(errors.length, 1);
+      assert.match(errors[0], /token验证失败/);
+      assert.match(errors[0], /NAPCAT_WS_TOKEN/);
+      assert.doesNotMatch(errors[0], /secret/);
+      bot.stop();
+    });
+  } finally {
+    bindLogger(null);
+  }
 });
