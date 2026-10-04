@@ -51,6 +51,8 @@ export class OneBotWsAdapter implements BotAdapter {
   start(handler: (event: MessageEvent) => void | Promise<void>): void {
     this.eventHandler = handler;
     this.stopped = false;
+    // A second start() must not open another socket next to the first one.
+    if (this.socket || this.reconnectTimer) return;
     this.connect();
   }
 
@@ -88,13 +90,31 @@ export class OneBotWsAdapter implements BotAdapter {
 
     this.socket = socket;
 
+    // Node's WebSocket reports every failed connect (refused port, rejected
+    // token or path) as an 'error' event while still CONNECTING and never
+    // fires 'close', so both events end up in this one idempotent handler.
+    const onDisconnect = (code: number, reason = ''): void => {
+      if (this.socket !== socket) return;
+      this.socket = null;
+      const detail = reason ? `，原因：${reason}` : '';
+      this.rejectPending(new Error(`OneBot WebSocket closed (${code}${detail})`));
+      if (this.stopped) return;
+      log.warn(`OneBot WebSocket 已断开 (${code})${detail}，准备重连`);
+      if (code === 1006) {
+        log.warn('1006 通常表示 WS 地址、端口、路径或 accessToken 不正确；可运行 npm run doctor:snowluma 自动诊断。');
+      }
+      this.scheduleReconnect();
+    };
+
     socket.addEventListener('open', () => {
       this.reconnectAttempt = 0;
       log.info(`OneBot WebSocket 已连接：${this.options.url}`);
     });
 
     socket.addEventListener('message', (event) => {
-      void this.handleFrame(event.data);
+      this.handleFrame(event.data).catch((error) => {
+        log.error(`OneBot 数据帧处理失败：${error instanceof Error ? error.message : String(error)}`);
+      });
     });
 
     socket.addEventListener('error', (event) => {
@@ -102,20 +122,10 @@ export class OneBotWsAdapter implements BotAdapter {
         ? `：${event.message}`
         : '';
       log.warn(`OneBot WebSocket 发生连接错误${details}`);
+      if (socket.readyState !== WebSocket.OPEN) onDisconnect(1006);
     });
 
-    socket.addEventListener('close', (event) => {
-      if (this.socket === socket) this.socket = null;
-      const reason = event.reason ? `，原因：${event.reason}` : '';
-      this.rejectPending(new Error(`OneBot WebSocket closed (${event.code}${reason})`));
-      if (!this.stopped) {
-        log.warn(`OneBot WebSocket 已断开 (${event.code})${reason}，准备重连`);
-        if (event.code === 1006) {
-          log.warn('1006 通常表示 WS 地址、端口、路径或 accessToken 不正确；可运行 npm run doctor:snowluma 自动诊断。');
-        }
-        this.scheduleReconnect();
-      }
-    });
+    socket.addEventListener('close', (event) => onDisconnect(event.code, event.reason));
   }
 
   private scheduleReconnect(): void {
@@ -148,13 +158,18 @@ export class OneBotWsAdapter implements BotAdapter {
       return;
     }
 
-    let payload: OneBotResponse & MessageEvent;
+    let parsed: unknown;
     try {
-      payload = JSON.parse(text) as OneBotResponse & MessageEvent;
+      parsed = JSON.parse(text);
     } catch {
       log.warn('忽略无法解析的 OneBot WebSocket 数据帧');
       return;
     }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      log.warn('忽略不是 JSON 对象的 OneBot WebSocket 数据帧');
+      return;
+    }
+    const payload = parsed as OneBotResponse & MessageEvent;
 
     if (payload.echo !== undefined) {
       const key = String(payload.echo);

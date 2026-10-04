@@ -57,20 +57,24 @@ class FakeWebSocket {
   static readonly CLOSING = 2;
   static readonly CLOSED = 3;
   static latest: FakeWebSocket | null = null;
+  static created = 0;
 
   readyState = FakeWebSocket.CONNECTING;
   readonly sent: string[] = [];
-  private readonly listeners = new Map<string, Array<(event: any) => void>>();
+  protected readonly listeners = new Map<string, Array<(event: any) => void>>();
 
   readonly url: string;
 
   constructor(url: string) {
     this.url = url;
     FakeWebSocket.latest = this;
-    queueMicrotask(() => {
-      this.readyState = FakeWebSocket.OPEN;
-      this.emit('open', {});
-    });
+    FakeWebSocket.created += 1;
+    queueMicrotask(() => this.handshake());
+  }
+
+  protected handshake(): void {
+    this.readyState = FakeWebSocket.OPEN;
+    this.emit('open', {});
   }
 
   addEventListener(type: string, listener: (event: any) => void): void {
@@ -98,7 +102,11 @@ class FakeWebSocket {
     this.emit('message', { data: JSON.stringify(event) });
   }
 
-  private emit(type: string, event: any): void {
+  emitRaw(data: string): void {
+    this.emit('message', { data });
+  }
+
+  protected emit(type: string, event: any): void {
     for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
 }
@@ -169,4 +177,175 @@ test('OneBot WS adapter supports message and merged-forward actions', async () =
       value: realWebSocket,
     });
   }
+});
+
+// Node's built-in WebSocket reports every failed connect (refused port, wrong
+// token or path) as an 'error' event while still CONNECTING and never fires 'close'.
+class RefusedWebSocket extends FakeWebSocket {
+  protected override handshake(): void {
+    this.emit('error', { message: 'Received network error or non-101 status code.' });
+  }
+}
+
+class RefusedWithCloseWebSocket extends FakeWebSocket {
+  protected override handshake(): void {
+    this.emit('error', { message: 'connect failed' });
+    this.readyState = FakeWebSocket.CLOSED;
+    this.emit('close', { code: 1006, reason: '' });
+  }
+}
+
+class SilentWebSocket extends FakeWebSocket {
+  override send(data: string): void {
+    this.sent.push(data);
+  }
+}
+
+class FailingWebSocket extends FakeWebSocket {
+  override send(data: string): void {
+    this.sent.push(data);
+    const request = JSON.parse(data) as { echo: string };
+    queueMicrotask(() => {
+      this.emit('message', {
+        data: JSON.stringify({ status: 'failed', retcode: 1200, wording: 'bad group', echo: request.echo }),
+      });
+    });
+  }
+}
+
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+async function withWebSocket(impl: typeof FakeWebSocket, run: () => Promise<void>): Promise<void> {
+  const realWebSocket = globalThis.WebSocket;
+  FakeWebSocket.created = 0;
+  Object.defineProperty(globalThis, 'WebSocket', { configurable: true, writable: true, value: impl });
+  try {
+    await run();
+  } finally {
+    Object.defineProperty(globalThis, 'WebSocket', { configurable: true, writable: true, value: realWebSocket });
+  }
+}
+
+const RECONNECT_ONE_SECOND = {
+  url: 'ws://127.0.0.1:3001/',
+  minReconnectDelayMs: 1_000,
+  maxReconnectDelayMs: 1_000,
+};
+
+test('a failed connect (error without close) is retried instead of ending the loop', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withWebSocket(RefusedWebSocket, async () => {
+    const bot = new OneBotWsAdapter(RECONNECT_ONE_SECOND);
+    bot.start(() => {});
+    await flush();
+    assert.equal(FakeWebSocket.created, 1);
+    assert.equal(bot.isConnected, false);
+
+    t.mock.timers.tick(1_100);
+    await flush();
+    assert.equal(FakeWebSocket.created, 2, 'no reconnect after the failed connect');
+
+    bot.stop();
+    t.mock.timers.tick(10_000);
+    await flush();
+    assert.equal(FakeWebSocket.created, 2, 'stop() must cancel the pending reconnect');
+  });
+});
+
+test('an error followed by a close schedules one reconnect, not two', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withWebSocket(RefusedWithCloseWebSocket, async () => {
+    const bot = new OneBotWsAdapter(RECONNECT_ONE_SECOND);
+    bot.start(() => {});
+    await flush();
+
+    t.mock.timers.tick(1_100);
+    await flush();
+    assert.equal(FakeWebSocket.created, 2);
+    bot.stop();
+  });
+});
+
+test('an established connection that drops is re-opened', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withWebSocket(FakeWebSocket, async () => {
+    const bot = new OneBotWsAdapter(RECONNECT_ONE_SECOND);
+    bot.start(() => {});
+    await flush();
+    assert.equal(bot.isConnected, true);
+
+    FakeWebSocket.latest?.close(1011);
+    assert.equal(bot.isConnected, false);
+
+    t.mock.timers.tick(1_100);
+    await flush();
+    assert.equal(FakeWebSocket.created, 2);
+    assert.equal(bot.isConnected, true);
+    bot.stop();
+  });
+});
+
+test('calling start() twice keeps a single connection', async () => {
+  await withWebSocket(FakeWebSocket, async () => {
+    const bot = new OneBotWsAdapter({ url: 'ws://127.0.0.1:3001/' });
+    bot.start(() => {});
+    bot.start(() => {});
+    await flush();
+    assert.equal(FakeWebSocket.created, 1);
+    bot.stop();
+  });
+});
+
+test('frames that are not JSON objects are ignored without crashing the process', async () => {
+  const rejections: unknown[] = [];
+  const onRejection = (reason: unknown) => { rejections.push(reason); };
+  process.on('unhandledRejection', onRejection);
+  try {
+    await withWebSocket(FakeWebSocket, async () => {
+      const events: MessageEvent[] = [];
+      const bot = new OneBotWsAdapter({ url: 'ws://127.0.0.1:3001/' });
+      bot.start((event) => { events.push(event); });
+      await flush();
+
+      const socket = FakeWebSocket.latest;
+      if (!socket) throw new Error('fake WebSocket was not created');
+      for (const raw of ['null', '"text"', '123', 'true', '[]', '{']) socket.emitRaw(raw);
+      socket.emitEvent({ post_type: 'message', message_type: 'group', group_id: '1', user_id: '2', raw_message: '#pixivping' });
+      await flush();
+
+      assert.equal(events.length, 1, 'the valid event after the junk frames must still arrive');
+      assert.deepEqual(rejections, []);
+      bot.stop();
+    });
+  } finally {
+    process.off('unhandledRejection', onRejection);
+  }
+});
+
+test('an unanswered action times out and a dropped connection rejects pending actions', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withWebSocket(SilentWebSocket, async () => {
+    const bot = new OneBotWsAdapter({ url: 'ws://127.0.0.1:3001/', requestTimeoutMs: 1_000 });
+    bot.start(() => {});
+    await flush();
+
+    const timedOut = assert.rejects(bot.call('get_login_info', {}), /OneBot action timeout: get_login_info/);
+    t.mock.timers.tick(1_000);
+    await timedOut;
+
+    const dropped = assert.rejects(bot.call('get_status', {}), /OneBot WebSocket closed \(1006\)/);
+    FakeWebSocket.latest?.close(1006);
+    await dropped;
+    bot.stop();
+  });
+});
+
+test('a failed OneBot action rejects with the server wording', async () => {
+  await withWebSocket(FailingWebSocket, async () => {
+    const bot = new OneBotWsAdapter({ url: 'ws://127.0.0.1:3001/', requestTimeoutMs: 1_000 });
+    bot.start(() => {});
+    await flush();
+    await assert.rejects(bot.sendGroupMessage(1, 'hello'), /bad group/);
+    bot.stop();
+  });
 });
