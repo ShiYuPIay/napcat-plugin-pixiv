@@ -9,18 +9,34 @@ import type {
   PixivItem,
 } from '../types.ts';
 
+export type SendItemsResult = {
+  total: number;
+  delivered: number;
+  failed: number;
+};
+
 function caption(item: PixivItem): string {
   return `${item.title} - ${item.author}\npid: ${item.pid}`;
 }
 
+function pixivLink(item: PixivItem): string {
+  return /^\d+$/.test(item.pid)
+    ? `\nhttps://www.pixiv.net/artworks/${item.pid}`
+    : '';
+}
+
+function textFallback(item: PixivItem): string {
+  return `${caption(item)}${pixivLink(item)}`;
+}
+
 function itemSegments(item: PixivItem): MessageSegment[] {
-  const content: MessageSegment[] = [
-    { type: 'text', data: { text: caption(item) } },
-  ];
-  if (item.url) {
-    content.push({ type: 'image', data: { file: item.url } });
+  if (!item.url) {
+    return [{ type: 'text', data: { text: textFallback(item) } }];
   }
-  return content;
+  return [
+    { type: 'text', data: { text: caption(item) } },
+    { type: 'image', data: { file: item.url } },
+  ];
 }
 
 function buildNode(item: PixivItem, selfId: Id | undefined): ForwardNode {
@@ -89,16 +105,30 @@ async function sendOne(
   bot: BotAdapter,
   event: MessageEvent,
   item: PixivItem,
-): Promise<void> {
-  const segments = itemSegments(item);
+): Promise<boolean> {
+  if (!item.url) {
+    try {
+      await sendMessage(bot, event, [{ type: 'text', data: { text: textFallback(item) } }]);
+      return true;
+    } catch (error) {
+      log.warn(`作品文字发送失败：${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  }
+
   try {
-    await sendMessage(bot, event, segments);
+    await sendMessage(bot, event, itemSegments(item));
+    return true;
   } catch (error) {
-    if (!item.url) throw error;
     log.warn(`图片发送失败，降级为文字：${error instanceof Error ? error.message : String(error)}`);
-    await sendMessage(bot, event, [
-      { type: 'text', data: { text: `${caption(item)}\nhttps://www.pixiv.net/artworks/${item.pid}` } },
-    ]);
+  }
+
+  try {
+    await sendMessage(bot, event, [{ type: 'text', data: { text: textFallback(item) } }]);
+    return true;
+  } catch (error) {
+    log.warn(`作品文字回退发送失败：${error instanceof Error ? error.message : String(error)}`);
+    return false;
   }
 }
 
@@ -106,21 +136,31 @@ export async function sendItems(
   bot: BotAdapter,
   event: MessageEvent,
   items: PixivItem[],
-): Promise<void> {
-  if (!items.length) return;
+): Promise<SendItemsResult> {
+  if (!items.length) return { total: 0, delivered: 0, failed: 0 };
 
-  // 单图直接发送；两张及以上才使用合并转发，避免“只有一张图也套一层转发”。
+  // A single result is sent directly; forwarding is only useful for multiple results.
   if (items.length >= 2 && getConfig().enableForward) {
     try {
       await sendMergedForward(bot, event, items);
       log.info(`已发送 ${items.length} 张图片的合并转发`);
-      return;
+      return { total: items.length, delivered: items.length, failed: 0 };
     } catch (error) {
       log.warn(`多图合并转发失败，回退逐条发送：${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
+  let delivered = 0;
   for (const item of items) {
-    await sendOne(bot, event, item);
+    try {
+      if (await sendOne(bot, event, item)) delivered += 1;
+    } catch (error) {
+      // Keep one malformed target or adapter failure from discarding later works.
+      log.warn(`跳过无法发送的作品：${error instanceof Error ? error.message : String(error)}`);
+    }
   }
+
+  const failed = items.length - delivered;
+  if (failed > 0) log.warn(`有 ${failed}/${items.length} 个作品未能发送`);
+  return { total: items.length, delivered, failed };
 }

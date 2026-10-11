@@ -33,6 +33,20 @@ test('App API mapping prefers large image and flattens translated tags', () => {
   assert.match(item.url ?? '', /i\.pixiv\.re/);
 });
 
+test('App API mapping falls back to original and the first meta_pages image', () => {
+  const original = mapAppApiItem({
+    id: 3,
+    image_urls: { original: 'https://i.pximg.net/original.jpg' },
+  });
+  const page = mapAppApiItem({
+    id: 4,
+    meta_pages: [{ image_urls: { original: 'https://i.pximg.net/page.jpg' } }],
+  });
+
+  assert.match(original.url ?? '', /original\.jpg$/);
+  assert.match(page.url ?? '', /page\.jpg$/);
+});
+
 test('content policy filters R18, AI and blocked content by default', () => {
   const base = {
     author: 'A',

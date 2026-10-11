@@ -8,7 +8,7 @@ import {
   saveConfig,
   setConfigPath,
 } from '../config.ts';
-import { bindLogger, log } from '../core/logger.ts';
+import { bindLogger, log, redactUrlForLog } from '../core/logger.ts';
 import { handleMessage } from '../handlers/message-handler.ts';
 import {
   resolveSnowLumaConnection,
@@ -81,10 +81,11 @@ const bot = new OneBotWsAdapter({
 
 bot.start((event) => handleMessage(event, bot));
 
-log.info(`SnowLuma/OneBot 模式已启动，目标 ${connection.url}`);
-log.info(
-  `连接配置来源：${connection.source}${connection.uin ? ` / QQ=${connection.uin}` : ''} / tokenLength=${connection.accessToken.length}`,
-);
+log.info(`SnowLuma/OneBot 模式已启动，目标 ${redactUrlForLog(connection.url)}`);
+const connectionSource = connection.source.startsWith('Docker ')
+  ? 'Docker 自动发现'
+  : connection.source === '默认配置' ? '默认配置' : '环境变量';
+log.info(`连接配置来源：${connectionSource} / accessToken=${connection.accessToken ? '已配置' : '未配置'}`);
 
 async function waitUntilConnected(timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -98,8 +99,8 @@ async function waitUntilConnected(timeoutMs: number): Promise<void> {
 async function runDoctor(): Promise<void> {
   try {
     await waitUntilConnected(10_000);
-    const login = await bot.call('get_login_info', {});
-    log.info(`✅ SnowLuma 连接诊断通过：WebSocket 鉴权、OneBot Action 均正常。登录信息：${JSON.stringify(login)}`);
+    await bot.call('get_login_info', {});
+    log.info('✅ SnowLuma 连接诊断通过：WebSocket 鉴权、OneBot Action 与登录信息读取均正常。');
     log.info('下一步：运行 npm run start:snowluma，然后在 QQ 发送 #pixivping。');
   } catch (error) {
     log.error(`❌ SnowLuma 连接诊断失败：${error instanceof Error ? error.message : String(error)}`);

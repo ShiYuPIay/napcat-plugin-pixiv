@@ -1,4 +1,4 @@
-import { log } from '../core/logger.ts';
+import { log, redactUrlForLog } from '../core/logger.ts';
 import type {
   BotAdapter,
   ForwardNode,
@@ -119,7 +119,7 @@ export class OneBotWsAdapter implements BotAdapter {
 
     socket.addEventListener('open', () => {
       this.openedAt = Date.now();
-      log.info(`OneBot WebSocket 已连接：${this.options.url}`);
+      log.info(`OneBot WebSocket 已连接：${redactUrlForLog(this.options.url)}`);
     });
 
     socket.addEventListener('message', (event) => {

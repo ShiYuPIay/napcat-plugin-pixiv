@@ -39,6 +39,9 @@ for cmd in git node npm docker; do
   command -v "$cmd" >/dev/null 2>&1 || fail "缺少命令：$cmd"
 done
 
+git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 \
+  || fail "无效的 Git 分支名：$BRANCH"
+
 docker inspect "$SNOWLUMA_CONTAINER" >/dev/null 2>&1 \
   || fail "未找到 SnowLuma 容器：$SNOWLUMA_CONTAINER"
 
@@ -46,12 +49,16 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
   || fail "请在 napcat-plugin-pixiv Git 仓库中运行此脚本"
 cd "$ROOT"
 
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-  fail "仓库存在未提交的已跟踪文件修改。为避免覆盖你的改动，部署已停止。"
+if [[ -n "$(git status --porcelain)" ]]; then
+  fail "仓库存在未提交或未跟踪的文件。为避免部署意外版本，部署已停止。"
 fi
 
 log "同步 Git 分支：$BRANCH"
 git fetch --prune origin "$BRANCH"
+if git show-ref --verify --quiet "refs/heads/$BRANCH" \
+  && ! git merge-base --is-ancestor "$BRANCH" "origin/$BRANCH"; then
+  fail "本地分支 $BRANCH 含有远端不存在的提交；为避免丢失工作，部署已停止。"
+fi
 git checkout -B "$BRANCH" "origin/$BRANCH"
 
 log "检查 Node.js / npm"
@@ -67,7 +74,11 @@ log "安装依赖（按 package-lock.json 精确安装，不改写已跟踪文�
 npm ci --no-audit --no-fund
 
 log "执行纯代码检查（不在此步骤启动守护，避免递归）"
-PIXIV_CHECK_ONLY=1 npm run check
+npm run check
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  fail "纯代码检查后仓库工作区不干净，部署已停止以保护产物。"
+fi
 
 RUNTIME_ENV=("SNOWLUMA_CONTAINER=$SNOWLUMA_CONTAINER")
 if [[ -n "$SNOWLUMA_UIN" ]]; then

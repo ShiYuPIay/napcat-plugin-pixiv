@@ -8,7 +8,7 @@ import {
   saveConfig,
 } from '../config.ts';
 import { checkCooldown, refundCooldown } from '../core/cooldown.ts';
-import { log } from '../core/logger.ts';
+import { log, redactSensitiveText } from '../core/logger.ts';
 import { sendItems, sendText } from '../messaging/sender.ts';
 import {
   checkApis,
@@ -25,16 +25,17 @@ function helpText(): string {
   return [
     'Pixiv 插件使用指南',
     '━━━━━━━━━━━━━━━━━━━━',
-    `${prefix}ping                    测试插件是否收到 QQ 消息`,
-    `${prefix} / ${prefix}随机        随机推荐插画`,
+    `${prefix}ping / ${prefix}test / ${prefix}诊断  测试 QQ 消息收发`,
+    `${prefix} / ${prefix}随机 / ${prefix}推荐 / ${prefix}rec  随机推荐插画`,
     `${prefix} <关键词>              关键词搜索`,
-    `${prefix}pid <作品ID>           按 PID 查看作品`,
-    `${prefix}画师 <UID>             查看画师最新作品`,
-    `${prefix}日榜 / 周榜 / 月榜      排行榜 Top ${num}`,
-    `${prefix}status                 上游接口连通性检查`,
+    `${prefix} pid <作品ID>          按 PID 查看作品（兼容：${prefix}pid）`,
+    `${prefix} uid <UID>             查看画师作品（兼容：${prefix}画师）`,
+    `${prefix} rank day|week|month   排行榜 Top ${num}`,
+    `${prefix}日榜 / 周榜 / 月榜      兼容快捷榜单`,
+    `${prefix} status                上游接口连通性检查`,
     `${prefix}设置                   查看/修改配置（管理员）`,
     `${prefix}重载                   重新读取配置文件（管理员）`,
-    `${prefix}help / ${prefix}帮助   显示此帮助`,
+    `${prefix} help / ${prefix}帮助  显示此帮助`,
     '',
     '群聊和私聊都支持。若完全无回复，请先在服务器运行 npm run doctor:snowluma。',
   ].join('\n');
@@ -88,7 +89,25 @@ async function handleRecommend(bot: BotAdapter, event: MessageEvent): Promise<vo
     await sendText(bot, event, '暂时没有符合条件的插画，请稍后再试');
     return;
   }
-  await sendItems(bot, event, items);
+  await sendResults(bot, event, items);
+}
+
+async function sendResults(
+  bot: BotAdapter,
+  event: MessageEvent,
+  items: Awaited<ReturnType<typeof fetchRecommend>>,
+): Promise<void> {
+  const result = await sendItems(bot, event, items);
+  if (result.delivered === 0) {
+    throw new Error(`已获取 ${result.total} 个结果，但消息发送失败，请稍后再试`);
+  }
+  if (result.failed > 0) {
+    try {
+      await sendText(bot, event, `部分结果未能发送：已发送 ${result.delivered}/${result.total} 个`);
+    } catch (error) {
+      log.warn(`发送部分失败提示时出错：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
 async function handleSearch(
@@ -106,7 +125,7 @@ async function handleSearch(
     await sendText(bot, event, `未找到与「${keyword}」相关的插画`);
     return;
   }
-  await sendItems(bot, event, items);
+  await sendResults(bot, event, items);
 }
 
 async function handleRanking(
@@ -119,7 +138,7 @@ async function handleRanking(
     await sendText(bot, event, '未获取到榜单数据，请稍后再试');
     return;
   }
-  await sendItems(bot, event, items);
+  await sendResults(bot, event, items);
 }
 
 async function handleIllust(
@@ -132,7 +151,7 @@ async function handleIllust(
     await sendText(bot, event, `未找到作品 ${pid}，或作品被当前内容策略过滤`);
     return;
   }
-  await sendItems(bot, event, items);
+  await sendResults(bot, event, items);
 }
 
 async function handleMember(
@@ -145,7 +164,7 @@ async function handleMember(
     await sendText(bot, event, `未找到画师 ${uid} 的作品，或作品均被过滤`);
     return;
   }
-  await sendItems(bot, event, items);
+  await sendResults(bot, event, items);
 }
 
 const SETTABLE: Record<string, keyof ReturnType<typeof getConfig>> = {
@@ -261,20 +280,33 @@ async function routeNetworkCommand(
     return;
   }
 
-  const pidMatch = /^pid\s*(\d+)?$/i.exec(suffix);
-  if (pidMatch) {
-    if (!pidMatch[1]) {
-      await sendText(bot, event, `用法：${prefix}pid <作品ID>`);
+  if (/^rank(?:\s|$)/i.test(suffix)) {
+    const match = /^rank\s+(day|week|month)$/i.exec(suffix);
+    const mode = match?.[1]?.toLowerCase();
+    if (mode !== 'day' && mode !== 'week' && mode !== 'month') {
+      await sendText(bot, event, `用法：${prefix} rank <day|week|month>`);
+      return;
+    }
+    await handleRanking(bot, event, mode);
+    return;
+  }
+
+  const pidCommand = /^pid(?:\s|$|\d)/i.test(suffix);
+  const pidMatch = /^pid\s*(\d+)$/i.exec(suffix);
+  if (pidCommand) {
+    if (!pidMatch) {
+      await sendText(bot, event, `用法：${prefix} pid <作品ID>`);
       return;
     }
     await handleIllust(bot, event, pidMatch[1]);
     return;
   }
 
-  const memberMatch = /^(?:画师|uid)\s*(\d+)?$/i.exec(suffix);
-  if (memberMatch) {
-    if (!memberMatch[1]) {
-      await sendText(bot, event, `用法：${prefix}画师 <画师UID>`);
+  const memberCommand = /^(?:画师|uid)(?:\s|$|\d)/i.test(suffix);
+  const memberMatch = /^(?:画师|uid)\s*(\d+)$/i.exec(suffix);
+  if (memberCommand) {
+    if (!memberMatch) {
+      await sendText(bot, event, `用法：${prefix} uid <画师UID>`);
       return;
     }
     await handleMember(bot, event, memberMatch[1]);
@@ -285,12 +317,25 @@ async function routeNetworkCommand(
 }
 
 function friendlyFailure(error: unknown, prefix: string): string {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = redactSensitiveText(error instanceof Error ? error.message : String(error));
+  if (error instanceof Error && error.name === 'SearchProvidersUnavailableError') {
+    const details = message.replace(/^Search providers unavailable:\s*/i, '');
+    return `搜索服务暂不可用（${details}）。请发送 ${prefix}status 检查接口状态后重试。`;
+  }
   if (/websocket is not connected|websocket closed/i.test(message)) {
     return `机器人连接尚未就绪。请在服务器运行 npm run doctor:snowluma；修复后再发送 ${prefix}ping。`;
   }
   if (/timeout|fetch failed|econn|enotfound|network/i.test(message)) {
     return `上游接口连接失败或超时。请发送 ${prefix}status 检查接口状态。`;
+  }
+  if (/rate.?limit|quota|too many requests/i.test(message)) {
+    return `上游请求受限，请稍后重试或发送 ${prefix}status 检查接口状态。`;
+  }
+  if (/API error/i.test(message)) {
+    const detail = /unauthori[sz]ed|forbidden|invalid.*(?:token|key)|authentication|auth/i.test(message)
+      ? '上游鉴权失败'
+      : '上游 API 返回错误';
+    return `${detail}。请发送 ${prefix}status 检查接口状态后重试。`;
   }
   return `执行失败：${message.slice(0, 120)}`;
 }
@@ -314,10 +359,8 @@ export async function handleMessage(
   if (!message.startsWith(prefix)) return;
 
   const suffix = message.slice(prefix.length).trim();
-  const target = event.message_type === 'group'
-    ? `群 ${String(event.group_id)}`
-    : `私聊 ${String(event.user_id)}`;
-  log.info(`收到 Pixiv 指令：${target} / user=${String(event.user_id ?? 'unknown')} / ${message.slice(0, 80)}`);
+  const target = event.message_type === 'group' ? '群聊' : '私聊';
+  log.info(`收到 Pixiv 指令（${target}）`);
 
   try {
     if (['ping', '诊断', 'test'].includes(suffix.toLowerCase())) {
@@ -357,7 +400,9 @@ export async function handleMessage(
       throw error;
     }
   } catch (error) {
-    const details = error instanceof Error ? error.stack ?? error.message : String(error);
+    const details = error instanceof Error && /API error/i.test(error.message)
+      ? `${error.name}: upstream API error`
+      : redactSensitiveText(error instanceof Error ? error.stack ?? error.message : String(error));
     log.error(`指令处理失败：${details}`);
     try {
       await sendText(bot, event, friendlyFailure(error, config.prefix));

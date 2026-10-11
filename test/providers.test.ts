@@ -8,6 +8,7 @@ import {
   fetchRanking,
   fetchSearch,
 } from '../src/services/pixiv-service.ts';
+import { fetchSearch as fetchLoliconSearch } from '../src/services/providers/lolicon.ts';
 
 const realFetch = globalThis.fetch;
 
@@ -31,18 +32,71 @@ const loliconItem = {
   urls: { regular: 'https://i.pximg.net/a.jpg' },
 };
 
-test('Lolicon returning an error field fails the search with the upstream message', async () => {
+test('Lolicon provider reports an API-level search error', async () => {
   stubFetch(() => ({ error: 'quota exceeded', data: [] }));
-  await assert.rejects(fetchSearch('miku'), /Lolicon API error: quota exceeded/);
+  await assert.rejects(fetchLoliconSearch('miku'), /Lolicon API error: quota exceeded/);
 });
 
-test('status check reports a Lolicon API-level error instead of a green check', async () => {
+test('a failed Lolicon search falls back once to Hibi and retains content policy', async () => {
+  const requests: URL[] = [];
+  globalThis.fetch = (async (input: unknown) => {
+    const url = new URL(String(input));
+    requests.push(url);
+    if (url.hostname === 'api.lolicon.app') {
+      return Response.json({ error: 'quota exceeded', data: [] });
+    }
+    return Response.json({ illusts: [
+      {
+        id: 1,
+        title: 'ok',
+        user: { name: 'artist' },
+        image_urls: { large: 'https://i.pximg.net/a.jpg' },
+        tags: [{ name: 'flower' }],
+      },
+      { id: 2, title: '萝莉图', user: { name: 'blocked' } },
+      { id: 3, title: 'ai', user: { name: 'ai' }, illust_ai_type: 2 },
+    ] });
+  }) as typeof fetch;
+
+  const results = await fetchSearch('miku');
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].pathname, '/api/pixiv/search');
+  assert.equal(requests[1].searchParams.get('word'), 'miku');
+  assert.deepEqual(results.map((item) => item.pid), ['1']);
+  assert.match(results[0].url ?? '', /i\.pixiv\.re/);
+});
+
+test('an empty Lolicon result does not call the Hibi fallback', async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return Response.json({ error: '', data: [] });
+  }) as typeof fetch;
+
+  assert.deepEqual(await fetchSearch('nothing'), []);
+  assert.equal(calls, 1);
+});
+
+test('failed primary and fallback searches return safe provider labels, not upstream text', async () => {
+  globalThis.fetch = (async () =>
+    Response.json({ error: { message: 'private upstream detail' } })) as typeof fetch;
+
+  await assert.rejects(fetchSearch('miku'), (error: Error) => {
+    assert.equal(error.name, 'SearchProvidersUnavailableError');
+    assert.match(error.message, /Lolicon API error; Pixiv\/Hibi API error/);
+    assert.doesNotMatch(error.message, /private upstream detail/);
+    return true;
+  });
+});
+
+test('status check classifies a Lolicon API-level error instead of a green check', async () => {
   stubFetch((url) => (url.includes('lolicon')
     ? { error: 'service down', data: [] }
     : { illusts: [] }));
 
   const report = await checkApis();
-  assert.match(report, /Lolicon ❌ Lolicon API error: service down/);
+  assert.match(report, /Lolicon ❌ 上游 API 返回错误/);
   assert.match(report, /Pixiv\/Hibi ✅/);
 });
 
@@ -53,22 +107,33 @@ test('status check reports a Hibi API-level error', async () => {
 
   const report = await checkApis();
   assert.match(report, /Lolicon ✅/);
-  assert.match(report, /Pixiv\/Hibi ❌ Pixiv ranking API error: Rate Limit/);
+  assert.match(report, /Pixiv\/Hibi ❌ 上游请求受限/);
+});
+
+test('status output redacts credentials echoed by either upstream', async () => {
+  stubFetch(() => ({
+    error: { message: 'Invalid token private-token; API key another-secret' },
+  }));
+
+  const report = await checkApis();
+
+  assert.doesNotMatch(report, /private-token|another-secret/);
 });
 
 test('Lolicon success and empty results are not errors', async () => {
   stubFetch(() => ({ error: '', data: [loliconItem] }));
   assert.equal((await fetchSearch('flower')).length, 1);
 
-  for (const body of [{ error: '', data: [] }, {}]) {
-    stubFetch(() => body);
-    assert.deepEqual(await fetchSearch('nothing'), []);
-  }
+  stubFetch(() => ({ error: '', data: [] }));
+  assert.deepEqual(await fetchSearch('nothing'), []);
+
+  stubFetch(() => ({}));
+  await assert.rejects(fetchLoliconSearch('nothing'), /Lolicon returned malformed data/);
 });
 
 test('Lolicon data that is not an array is reported as malformed', async () => {
   stubFetch(() => ({ error: '', data: 'oops' }));
-  await assert.rejects(fetchSearch('x'), /Lolicon returned malformed data/);
+  await assert.rejects(fetchLoliconSearch('x'), /Lolicon returned malformed data/);
 });
 
 test('Hibi list endpoints surface error fields and malformed lists', async () => {
@@ -80,8 +145,24 @@ test('Hibi list endpoints surface error fields and malformed lists', async () =>
   await assert.rejects(fetchRanking('day'), /Pixiv ranking returned malformed data/);
   await assert.rejects(fetchMemberIllusts('1'), /Pixiv member returned malformed data/);
 
+  stubFetch(() => ({}));
+  await assert.rejects(fetchRanking('day'), /Pixiv ranking returned malformed data/);
+  await assert.rejects(fetchMemberIllusts('1'), /Pixiv member returned malformed data/);
+
   stubFetch(() => ({ illusts: [] }));
   assert.deepEqual(await fetchRanking('week'), []);
+});
+
+test('Hibi list mappings use original and the first meta_pages image as fallbacks', async () => {
+  stubFetch(() => ({ illusts: [
+    { id: 1, title: 'original', image_urls: { original: 'https://i.pximg.net/original.jpg' } },
+    { id: 2, title: 'page', meta_pages: [{ image_urls: { original: 'https://i.pximg.net/page.jpg' } }] },
+  ] }));
+
+  const results = await fetchRanking('day');
+  assert.equal(results.length, 2);
+  assert.match(results[0].url ?? '', /original\.jpg$/);
+  assert.match(results[1].url ?? '', /page\.jpg$/);
 });
 
 test('Hibi illust lookup surfaces an error field and still returns real works', async () => {

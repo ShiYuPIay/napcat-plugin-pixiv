@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
 
@@ -61,5 +61,8 @@ jobs:
           test -f dist/index.mjs
           test -f dist/snowluma.mjs
           test -f dist/package.json
+          test -f dist/README.md
+          test -f dist/LICENSE
+          test -f dist/config.example.json
           node -e "const p=require('./dist/package.json'); if(p.main!=='index.mjs'||p.license!=='AGPL-3.0-only') process.exit(1)"
           node --input-type=module -e "const m=await import('./dist/index.mjs'); const hooks=['plugin_init','plugin_onmessage','plugin_cleanup','plugin_get_config','plugin_set_config','plugin_on_config_change']; const missing=hooks.filter((k)=>typeof m[k]!=='function'); if(missing.length){console.error('missing exports:',missing.join(', ')); process.exit(1)}"

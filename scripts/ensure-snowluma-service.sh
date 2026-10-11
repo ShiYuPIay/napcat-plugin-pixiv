@@ -8,6 +8,13 @@ SNOWLUMA_UIN="${SNOWLUMA_UIN:-}"
 fail() { printf '\n错误：%s\n' "$*" >&2; exit 1; }
 log() { printf '\n==> %s\n' "$*"; }
 
+if [[ ! "$SNOWLUMA_CONTAINER" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$ ]]; then
+  fail "SNOWLUMA_CONTAINER 必须是 1-255 个字符的 Docker 容器名称或 ID"
+fi
+if [[ -n "$SNOWLUMA_UIN" && ! "$SNOWLUMA_UIN" =~ ^[0-9]{1,20}$ ]]; then
+  fail "SNOWLUMA_UIN 必须是 1-20 位数字"
+fi
+
 [[ "$(uname -s)" == "Linux" ]] || fail "systemd 守护仅适用于 Linux"
 [[ "$(id -u)" -eq 0 ]] || fail "安装 systemd 守护需要 root 权限"
 command -v systemctl >/dev/null 2>&1 || fail "当前系统没有 systemctl"

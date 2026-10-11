@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, test } from 'node:test';
@@ -10,6 +10,7 @@ import {
   getConfig,
   isAdmin,
   isBlockedText,
+  loadConfig,
   normalizeText,
   reloadConfig,
   resetConfig,
@@ -37,6 +38,14 @@ test('configuration validation applies valid values and rejects invalid values',
   assert.deepEqual(result.invalid, ['bogus']);
 });
 
+test('API base URLs reject embedded credentials without replacing the valid endpoint', () => {
+  const original = getConfig().hibiApi;
+  const result = applyConfig({ hibiApi: 'https://operator:token@example.com/api/pixiv' });
+
+  assert.deepEqual(result.invalid, ['hibiApi']);
+  assert.equal(getConfig().hibiApi, original);
+});
+
 test('blocked keyword normalization resists width, case and whitespace bypasses', () => {
   assert.equal(normalizeText(' ＬＯＬＩ 天使 '), 'loli天使');
   assert.equal(isBlockedText('Ｌｏ Ｌｉ angel'), true);
@@ -44,10 +53,14 @@ test('blocked keyword normalization resists width, case and whitespace bypasses'
 });
 
 test('admin parsing accepts only numeric QQ ids', () => {
-  applyConfig({ adminUsers: '123, 456，abc 7x' });
+  assert.deepEqual(applyConfig({ adminUsers: '123, 456，789' }).invalid, []);
   assert.equal(isAdmin(123), true);
   assert.equal(isAdmin('456'), true);
+  assert.equal(isAdmin('789'), true);
   assert.equal(isAdmin('abc'), false);
+  const result = applyConfig({ adminUsers: '123,abc 7x' });
+  assert.deepEqual(result.invalid, ['adminUsers']);
+  assert.equal(isAdmin('123'), true, 'invalid input must not partially replace the administrator list');
 });
 
 test('saveConfig creates a missing config.json with defaults', () => {
@@ -179,4 +192,53 @@ test('reloadConfig does nothing without a config file path', () => {
   applyConfig({ num: 8 });
   assert.deepEqual(reloadConfig(), { ok: false, reason: '未设置配置文件路径' });
   assert.equal(getConfig().num, 8);
+});
+
+
+test('saveConfig does not overwrite an existing malformed config file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'napcat-plugin-pixiv-'));
+  const file = join(dir, 'config.json');
+  const malformed = '{ not json';
+  try {
+    writeFileSync(file, malformed);
+    setConfigPath(file);
+    assert.equal(saveConfig({ num: 8 }), false);
+    assert.equal(readFileSync(file, 'utf8'), malformed);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('loadConfig replaces stale runtime values with defaults plus persisted values', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'napcat-plugin-pixiv-'));
+  const file = join(dir, 'config.json');
+  try {
+    writeFileSync(file, JSON.stringify({ adminUsers: '123', num: 8 }));
+    setConfigPath(file);
+    applyConfig({ num: 19, prefix: '!pixiv' });
+
+    const result = loadConfig();
+
+    assert.deepEqual(result, { applied: { adminUsers: '123', num: 8 }, invalid: [] });
+    assert.equal(getConfig().num, 8);
+    assert.equal(getConfig().prefix, DEFAULT_CONFIG.prefix);
+    assert.equal(isAdmin('123'), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('loadConfig keeps the running config when persisted JSON is malformed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'napcat-plugin-pixiv-'));
+  const file = join(dir, 'config.json');
+  try {
+    writeFileSync(file, '{ not json');
+    setConfigPath(file);
+    applyConfig({ num: 11 });
+
+    assert.deepEqual(loadConfig(), { applied: {}, invalid: ['<config-json>'] });
+    assert.equal(getConfig().num, 11);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

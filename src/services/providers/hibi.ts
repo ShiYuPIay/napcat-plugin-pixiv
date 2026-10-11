@@ -40,6 +40,7 @@ export function mapAppApiItem(item: AppApiIllust): PixivItem {
   const tags = (item.tags ?? [])
     .flatMap((tag) => [tag?.name, tag?.translated_name])
     .filter((tag): tag is string => typeof tag === 'string' && Boolean(tag));
+  const firstPage = item.meta_pages?.[0]?.image_urls;
 
   return {
     pid: String(item.id ?? ''),
@@ -48,7 +49,11 @@ export function mapAppApiItem(item: AppApiIllust): PixivItem {
     url: proxyImageUrl(
       item.image_urls?.large ??
       item.image_urls?.medium ??
-      item.meta_single_page?.original_image_url,
+      item.image_urls?.original ??
+      item.meta_single_page?.original_image_url ??
+      firstPage?.large ??
+      firstPage?.medium ??
+      firstPage?.original,
     ),
     tags,
     r18: (item.x_restrict ?? 0) > 0,
@@ -69,7 +74,7 @@ async function requestList(
   params: Record<string, string>,
 ): Promise<AppApiIllust[]> {
   const json = await fetchJson<RankingResponse>(label, endpoint(path, params));
-  const items = json.illusts ?? json.data ?? [];
+  const items = json.illusts ?? json.data;
   if (!Array.isArray(items)) throw new Error(`${label} returned malformed data`);
   return items;
 }
@@ -99,6 +104,7 @@ export async function fetchIllust(pid: string): Promise<PixivItem[]> {
     : [
         illust.image_urls?.large ??
         illust.image_urls?.medium ??
+        illust.image_urls?.original ??
         illust.meta_single_page?.original_image_url,
       ];
 
@@ -112,6 +118,11 @@ export async function fetchIllust(pid: string): Promise<PixivItem[]> {
 
 export async function fetchMemberIllusts(uid: string): Promise<PixivItem[]> {
   const items = await requestList('Pixiv member', 'member_illust', { id: uid });
+  return applyContentPolicy(items.map(mapAppApiItem)).slice(0, getConfig().num);
+}
+
+export async function fetchSearch(keyword: string): Promise<PixivItem[]> {
+  const items = await requestList('Pixiv search', 'search', { word: keyword });
   return applyContentPolicy(items.map(mapAppApiItem)).slice(0, getConfig().num);
 }
 

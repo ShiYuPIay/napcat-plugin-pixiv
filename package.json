@@ -39,7 +39,6 @@
     "test": "echo \"[TEST] 下方 OneBot WebSocket 连接日志来自 FakeWebSocket 单元测试，不代表生产 SnowLuma 已连接\" && node --experimental-strip-types --test test/*.test.ts",
     "check:ci": "npm run typecheck && npm test && npm run build",
     "check": "npm run check:ci",
-    "postcheck": "node scripts/postcheck-snowluma.mjs",
     "doctor:snowluma": "npm run build && node scripts/doctor-snowluma-retry.mjs",
     "start:snowluma": "npm run build && node dist/snowluma.mjs --auto",
     "deploy:snowluma": "bash scripts/deploy-snowluma.sh",
