@@ -98,7 +98,7 @@ export const plugin_on_config_change: PluginModule['plugin_on_config_change'] =
     prepareContext(ctx);
     const { applied, invalid } = applyConfig(currentConfig as Record<string, unknown>);
     if (invalid.length) log.warn(`忽略无效配置项：${invalid.join(', ')}`);
-    saveConfig(applied);
+    if (!saveConfig(applied)) log.warn('插件配置写入失败');
   };
 
 export const plugin_cleanup: PluginModule['plugin_cleanup'] = async (ctx) => {

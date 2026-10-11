@@ -1,4 +1,15 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import type { PluginConfig } from './types.ts';
 
@@ -60,6 +71,7 @@ function validHttpUrl(value: unknown): string | null {
   try {
     const parsed = new URL(text);
     if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    if (parsed.username || parsed.password) return null;
     return text.replace(/\/+$/, '');
   } catch {
     return null;
@@ -78,6 +90,20 @@ function validImageProxy(value: unknown): string | null {
   return /^[a-z0-9.-]+(?::\d+)?$/i.test(host) ? host : null;
 }
 
+function validAdminUsers(value: unknown): string | null {
+  let text: string;
+  if (typeof value === 'string') {
+    text = value.trim();
+  } else if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+    text = String(value);
+  } else {
+    return null;
+  }
+
+  if (!text) return '';
+  return text.split(/[,，\s]+/).every((id) => /^\d{1,20}$/.test(id)) ? text : null;
+}
+
 type ConfigKey = keyof PluginConfig;
 type Validator<K extends ConfigKey = ConfigKey> = (value: unknown) => PluginConfig[K] | null;
 
@@ -90,13 +116,46 @@ const validators: { [K in ConfigKey]: Validator<K> } = {
   enableForward: toBoolean,
   rateLimitSecs: (value) => boundedInteger(value, 0, 86_400),
   blockedKeywords: (value) => typeof value === 'string' ? value : null,
-  adminUsers: (value) =>
-    typeof value === 'string' || typeof value === 'number' ? String(value) : null,
+  adminUsers: validAdminUsers,
   loliconApi: validHttpUrl,
   hibiApi: validHttpUrl,
   imageProxy: validImageProxy,
   requestTimeoutMs: (value) => boundedInteger(value, 1_000, 60_000),
 };
+
+type ConfigValidation = {
+  config: PluginConfig;
+  applied: Partial<PluginConfig>;
+  invalid: string[];
+};
+
+function validateConfig(
+  partial: Record<string, unknown> | null | undefined,
+  base: PluginConfig,
+): ConfigValidation {
+  const config = { ...base };
+  const applied: Partial<PluginConfig> = {};
+  const invalid: string[] = [];
+
+  for (const [rawKey, rawValue] of Object.entries(partial ?? {})) {
+    if (!Object.hasOwn(validators, rawKey)) {
+      invalid.push(rawKey);
+      continue;
+    }
+
+    const key = rawKey as ConfigKey;
+    const value = validators[key](rawValue);
+    if (value === null) {
+      invalid.push(rawKey);
+      continue;
+    }
+
+    (config as Record<ConfigKey, PluginConfig[ConfigKey]>)[key] = value;
+    (applied as Record<ConfigKey, PluginConfig[ConfigKey]>)[key] = value;
+  }
+
+  return { config, applied, invalid };
+}
 
 export function getConfig(): Readonly<PluginConfig> {
   return currentConfig;
@@ -114,100 +173,18 @@ export function setConfigPath(path?: string | null): void {
 export function applyConfig(
   partial: Record<string, unknown> | null | undefined,
 ): { applied: Partial<PluginConfig>; invalid: string[] } {
-  const applied: Partial<PluginConfig> = {};
-  const invalid: string[] = [];
-
-  for (const [rawKey, rawValue] of Object.entries(partial ?? {})) {
-    if (!Object.hasOwn(validators, rawKey)) {
-      invalid.push(rawKey);
-      continue;
-    }
-
-    const key = rawKey as ConfigKey;
-    const value = validators[key](rawValue);
-    if (value === null) {
-      invalid.push(rawKey);
-      continue;
-    }
-
-    (currentConfig as Record<ConfigKey, PluginConfig[ConfigKey]>)[key] = value;
-    (applied as Record<ConfigKey, PluginConfig[ConfigKey]>)[key] = value;
-  }
-
-  return { applied, invalid };
+  const result = validateConfig(partial, currentConfig);
+  currentConfig = result.config;
+  return { applied: result.applied, invalid: result.invalid };
 }
 
-export function loadConfig(path = configFilePath): { applied: Partial<PluginConfig>; invalid: string[] } | null {
-  if (!path) return null;
-  let raw: string;
-  try {
-    raw = readFileSync(path, 'utf8');
-  } catch {
-    return null;
-  }
+type EnvironmentOverrides = {
+  values: Record<string, unknown>;
+  variables: Map<string, string>;
+};
 
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return applyConfig(parsed);
-  } catch {
-    return { applied: {}, invalid: ['<config-json>'] };
-  }
-}
-
-export function saveConfig(
-  partial: Partial<PluginConfig> = currentConfig,
-  path = configFilePath,
-): boolean {
-  if (!path) return false;
-
-  let existing: Record<string, unknown> = {};
-  try {
-    existing = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-  } catch {
-    // New file, or invalid old file: write a clean configuration.
-  }
-
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify({ ...existing, ...partial }, null, 2)}\n`, 'utf8');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-type ReloadResult =
-  | { ok: true; invalid: string[] }
-  | { ok: false; reason: string };
-
-/**
- * Re-reads the config file the way startup does: defaults, then the file, then
- * PIXIV_* overrides. An unusable file leaves the running configuration untouched.
- */
-export function reloadConfig(): ReloadResult {
-  if (!configFilePath) return { ok: false, reason: '未设置配置文件路径' };
-
-  let file: unknown;
-  try {
-    file = JSON.parse(readFileSync(configFilePath, 'utf8'));
-  } catch {
-    return { ok: false, reason: '配置文件不存在或不是有效 JSON，已保留当前配置' };
-  }
-  if (file === null || typeof file !== 'object' || Array.isArray(file)) {
-    return { ok: false, reason: '配置文件必须是 JSON 对象，已保留当前配置' };
-  }
-
-  const environment = environmentSource;
-  resetConfig();
-  const { invalid } = applyConfig(file as Record<string, unknown>);
-  if (environment) invalid.push(...applyEnvironment(environment));
-  return { ok: true, invalid };
-}
-
-/** Applies PIXIV_* overrides and returns the names of the variables that were rejected. */
-export function applyEnvironment(env: NodeJS.ProcessEnv = process.env): string[] {
-  environmentSource = env;
-  const mapped: Record<string, unknown> = {};
+function environmentOverrides(env: NodeJS.ProcessEnv): EnvironmentOverrides {
+  const values: Record<string, unknown> = {};
   const variables = new Map<string, string>();
   const mappings: Array<[keyof PluginConfig, string]> = [
     ['enabled', 'PIXIV_ENABLED'],
@@ -227,10 +204,132 @@ export function applyEnvironment(env: NodeJS.ProcessEnv = process.env): string[]
 
   for (const [key, variable] of mappings) {
     if (env[variable] === undefined) continue;
-    mapped[key] = env[variable];
+    values[key] = env[variable];
     variables.set(key, variable);
   }
-  return applyConfig(mapped).invalid.map((key) => variables.get(key) ?? key);
+  return { values, variables };
+}
+
+function applyEnvironmentTo(
+  base: PluginConfig,
+  env: NodeJS.ProcessEnv,
+): ConfigValidation {
+  const { values, variables } = environmentOverrides(env);
+  const result = validateConfig(values, base);
+  return {
+    ...result,
+    invalid: result.invalid.map((key) => variables.get(key) ?? key),
+  };
+}
+
+function isConfigObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function loadConfig(path = configFilePath): { applied: Partial<PluginConfig>; invalid: string[] } | null {
+  if (!path) return null;
+
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    return { applied: {}, invalid: ['<config-json>'] };
+  }
+  if (!isConfigObject(parsed)) return { applied: {}, invalid: ['<config-json>'] };
+
+  const fileResult = validateConfig(parsed, { ...DEFAULT_CONFIG });
+  const environmentResult = environmentSource
+    ? applyEnvironmentTo(fileResult.config, environmentSource)
+    : null;
+  currentConfig = environmentResult?.config ?? fileResult.config;
+  return {
+    applied: { ...fileResult.applied, ...environmentResult?.applied },
+    invalid: [...fileResult.invalid, ...(environmentResult?.invalid ?? [])],
+  };
+}
+
+export function saveConfig(
+  partial: Partial<PluginConfig> = currentConfig,
+  path = configFilePath,
+): boolean {
+  if (!path) return false;
+
+  const checked = validateConfig(partial as Record<string, unknown>, currentConfig);
+  if (checked.invalid.length > 0) return false;
+
+  let existing: Record<string, unknown> = {};
+  try {
+    if (existsSync(path)) {
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      if (!isConfigObject(parsed)) return false;
+      existing = parsed;
+    }
+  } catch {
+    // Do not overwrite an existing unreadable or malformed configuration.
+    return false;
+  }
+
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  let descriptor: number | null = null;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    descriptor = openSync(temporaryPath, 'wx', 0o600);
+    writeFileSync(descriptor, `${JSON.stringify({ ...existing, ...checked.applied }, null, 2)}\n`, 'utf8');
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = null;
+    renameSync(temporaryPath, path);
+    return true;
+  } catch {
+    if (descriptor !== null) {
+      try { closeSync(descriptor); } catch { /* Ignore cleanup errors. */ }
+    }
+    try { unlinkSync(temporaryPath); } catch { /* The temp file may not exist. */ }
+    return false;
+  }
+}
+
+type ReloadResult =
+  | { ok: true; invalid: string[] }
+  | { ok: false; reason: string };
+
+/**
+ * Re-reads the config file the way startup does: defaults, then the file, then
+ * PIXIV_* overrides. An unusable file leaves the running configuration untouched.
+ */
+export function reloadConfig(): ReloadResult {
+  if (!configFilePath) return { ok: false, reason: '未设置配置文件路径' };
+
+  let file: unknown;
+  try {
+    file = JSON.parse(readFileSync(configFilePath, 'utf8')) as unknown;
+  } catch {
+    return { ok: false, reason: '配置文件不存在或不是有效 JSON，已保留当前配置' };
+  }
+  if (!isConfigObject(file)) {
+    return { ok: false, reason: '配置文件必须是 JSON 对象，已保留当前配置' };
+  }
+
+  const fileResult = validateConfig(file, { ...DEFAULT_CONFIG });
+  const environmentResult = environmentSource
+    ? applyEnvironmentTo(fileResult.config, environmentSource)
+    : null;
+  currentConfig = environmentResult?.config ?? fileResult.config;
+  return { ok: true, invalid: [...fileResult.invalid, ...(environmentResult?.invalid ?? [])] };
+}
+
+/** Applies PIXIV_* overrides and returns the names of the variables that were rejected. */
+export function applyEnvironment(env: NodeJS.ProcessEnv = process.env): string[] {
+  environmentSource = env;
+  const result = applyEnvironmentTo(currentConfig, env);
+  currentConfig = result.config;
+  return result.invalid;
 }
 
 export function normalizeText(value: unknown): string {
@@ -253,7 +352,7 @@ export function getAdminUsers(): string[] {
   return currentConfig.adminUsers
     .split(/[,，\s]+/)
     .map((value) => value.trim())
-    .filter((value) => /^\d+$/.test(value));
+    .filter((value) => /^\d{1,20}$/.test(value));
 }
 
 export function isAdmin(userId: unknown): boolean {

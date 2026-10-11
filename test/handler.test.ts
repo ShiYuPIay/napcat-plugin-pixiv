@@ -11,6 +11,7 @@ import {
   setConfigPath,
 } from '../src/config.ts';
 import { clearCooldowns } from '../src/core/cooldown.ts';
+import { bindLogger } from '../src/core/logger.ts';
 import { handleMessage } from '../src/handlers/message-handler.ts';
 import type {
   BotAdapter,
@@ -25,20 +26,41 @@ class FakeBot implements BotAdapter {
   privateMessages: Array<{ userId: Id; message: string | MessageSegment[] }> = [];
   forwards: Array<{ groupId: Id; nodes: ForwardNode[] }> = [];
   privateForwards: Array<{ userId: Id; nodes: ForwardNode[] }> = [];
+  failForward = false;
+  failImageUrls = new Set<string>();
+  failTextFragments = new Set<string>();
+
+  private shouldFail(message: string | MessageSegment[]): boolean {
+    if (typeof message === 'string') {
+      return [...this.failTextFragments].some((fragment) => message.includes(fragment));
+    }
+    for (const segment of message) {
+      if (segment.type === 'image' && this.failImageUrls.has(String(segment.data.file))) return true;
+    }
+    const text = message
+      .filter((segment) => segment.type === 'text')
+      .map((segment) => String(segment.data.text ?? ''))
+      .join('');
+    return [...this.failTextFragments].some((fragment) => text.includes(fragment));
+  }
 
   async sendGroupMessage(groupId: Id, message: string | MessageSegment[]): Promise<void> {
+    if (this.shouldFail(message)) throw new Error('message send failed');
     this.groupMessages.push({ groupId, message });
   }
 
   async sendPrivateMessage(userId: Id, message: string | MessageSegment[]): Promise<void> {
+    if (this.shouldFail(message)) throw new Error('message send failed');
     this.privateMessages.push({ userId, message });
   }
 
   async sendGroupForwardMessage(groupId: Id, nodes: ForwardNode[]): Promise<void> {
+    if (this.failForward) throw new Error('forward failed');
     this.forwards.push({ groupId, nodes });
   }
 
   async sendPrivateForwardMessage(userId: Id, nodes: ForwardNode[]): Promise<void> {
+    if (this.failForward) throw new Error('forward failed');
     this.privateForwards.push({ userId, nodes });
   }
 }
@@ -92,6 +114,38 @@ test('blocked keyword is rejected before calling upstream', async () => {
 
   assert.equal(bot.groupMessages.length, 1);
   assert.equal(textOf(bot.groupMessages[0].message), '该关键词已被屏蔽');
+});
+
+test('failed search providers give a concise status hint without echoing the query', async () => {
+  globalThis.fetch = (async () =>
+    Response.json({ error: { message: 'private upstream detail' } })) as typeof fetch;
+  const bot = new FakeBot();
+
+  await handleMessage(groupEvent('2', '#pixiv private-query'), bot);
+
+  const [reply] = groupTexts(bot);
+  assert.match(reply, /搜索服务暂不可用/);
+  assert.match(reply, /#pixivstatus/);
+  assert.doesNotMatch(reply, /private-query|private upstream detail/);
+});
+
+test('upstream authentication errors are categorized in replies and logs', async () => {
+  const logs: string[] = [];
+  bindLogger({ log: (message) => logs.push(message) });
+  globalThis.fetch = (async () =>
+    Response.json({ error: { message: 'Invalid token actual-private-secret' } })) as typeof fetch;
+  const bot = new FakeBot();
+
+  try {
+    await handleMessage(groupEvent('2', '#pixiv pid 123'), bot);
+  } finally {
+    bindLogger(null);
+  }
+
+  const [reply] = groupTexts(bot);
+  assert.match(reply, /上游鉴权失败/);
+  assert.doesNotMatch(reply, /actual-private-secret/);
+  assert.doesNotMatch(logs.join('\n'), /actual-private-secret/);
 });
 
 test('private ping receives an immediate reply', async () => {
@@ -177,6 +231,29 @@ function privateEvent(userId: Id, text: string): MessageEvent {
 function groupTexts(bot: FakeBot): string[] {
   return bot.groupMessages.map(({ message }) => textOf(message));
 }
+
+test('canonical rank commands work, legacy aliases remain, and malformed rank modes show usage', async () => {
+  const modes: string[] = [];
+  globalThis.fetch = (async (input: unknown) => {
+    modes.push(new URL(String(input)).searchParams.get('mode') ?? '');
+    return Response.json({ illusts: [] });
+  }) as typeof fetch;
+  const bot = new FakeBot();
+
+  for (const command of [
+    '#pixiv rank day', '#pixiv rank week', '#pixiv rank month',
+    '#pixiv日榜', '#pixiv周榜', '#pixiv月榜',
+  ]) {
+    await handleMessage(groupEvent('2', command), bot);
+  }
+  for (const command of ['#pixiv rank', '#pixiv rank year', '#pixiv rank day extra']) {
+    await handleMessage(groupEvent('2', command), bot);
+  }
+
+  assert.deepEqual(modes, ['day', 'week', 'month', 'day', 'week', 'month']);
+  assert.equal(bot.groupMessages.length, 9);
+  for (const text of groupTexts(bot).slice(6)) assert.match(text, /^用法：#pixiv rank/);
+});
 
 function useConfigFile(content?: unknown): string {
   const file = join(tempDir, 'config.json');
@@ -388,16 +465,69 @@ test('cooldown is per user and shared between group and private chats', async ()
   assert.match(textOf(bot.privateMessages[0].message), /^冷却中，请 \d+ 秒后再试$/);
 });
 
-test('a failed upstream request refunds the cooldown so the user can retry at once', async () => {
+test('failed primary and fallback requests refund cooldown and provide a status hint', async () => {
   applyConfig({ rateLimitSecs: 15, num: 1 });
   const bot = new FakeBot();
 
   stubFetch(() => new Response('busy', { status: 503 }));
   await handleMessage(groupEvent('2', '#pixiv miku'), bot);
-  assert.match(groupTexts(bot)[0], /^执行失败：Lolicon HTTP 503/);
+  assert.match(groupTexts(bot)[0], /^搜索服务暂不可用/);
+  assert.match(groupTexts(bot)[0], /#pixivstatus/);
 
   stubFetch(() => Response.json({ error: '', data: [loliconItem] }));
   await handleMessage(groupEvent('2', '#pixiv miku'), bot);
   assert.equal(bot.groupMessages.length, 2);
   assert.doesNotMatch(groupTexts(bot)[1], /冷却中/);
+});
+
+
+test('malformed explicit PID and artist commands return usage without querying upstream', async () => {
+  let requests = 0;
+  globalThis.fetch = (async () => {
+    requests += 1;
+    return Response.json({ error: '', data: [] });
+  }) as typeof fetch;
+  const bot = new FakeBot();
+
+  for (const text of [
+    '#pixiv pid 12abc',
+    '#pixivpid 123x',
+    '#pixivuid nope',
+    '#pixiv画师 1 2',
+  ]) {
+    await handleMessage(groupEvent('2', text), bot);
+  }
+
+  assert.equal(requests, 0);
+  assert.equal(bot.groupMessages.length, 4);
+  assert.match(groupTexts(bot)[0], /^用法：#pixiv pid/);
+  assert.match(groupTexts(bot)[1], /^用法：#pixiv pid/);
+  assert.match(groupTexts(bot)[2], /^用法：#pixiv uid/);
+  assert.match(groupTexts(bot)[3], /^用法：#pixiv uid/);
+});
+
+test('partial delivery keeps the cooldown so a retry does not duplicate sent results', async () => {
+  applyConfig({ rateLimitSecs: 15, num: 2, enableForward: true });
+  let requests = 0;
+  globalThis.fetch = (async () => {
+    requests += 1;
+    return Response.json({ error: '', data: [
+      { ...loliconItem, pid: 1, title: 'first', urls: { regular: 'https://i.pximg.net/first.jpg' } },
+      { ...loliconItem, pid: 2, title: 'second-title', urls: { regular: 'https://i.pximg.net/second.jpg' } },
+    ] });
+  }) as typeof fetch;
+  const bot = new FakeBot();
+  bot.failForward = true;
+  bot.failImageUrls.add('https://i.pixiv.re/first.jpg');
+  bot.failImageUrls.add('https://i.pixiv.re/second.jpg');
+  bot.failTextFragments.add('second-title');
+
+  await handleMessage(groupEvent('55', '#pixiv miku'), bot);
+  await handleMessage(groupEvent('55', '#pixiv miku'), bot);
+
+  assert.equal(requests, 1, 'the cooldown should prevent a repeated upstream request');
+  assert.equal(bot.groupMessages.length, 3, 'first fallback, partial-result notice, and cooldown notice');
+  assert.match(textOf(bot.groupMessages[0].message), /artworks\/1/);
+  assert.match(textOf(bot.groupMessages[1].message), /已发送 1\/2 个/);
+  assert.match(textOf(bot.groupMessages[2].message), /^冷却中/);
 });

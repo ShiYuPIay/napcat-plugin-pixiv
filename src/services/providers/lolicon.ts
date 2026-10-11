@@ -39,7 +39,7 @@ async function post(body: Record<string, unknown>): Promise<LoliconItem[]> {
     body: JSON.stringify(body),
   });
 
-  const data = json.data ?? [];
+  const data = json.data;
   if (!Array.isArray(data)) throw new Error('Lolicon returned malformed data');
   return data;
 }

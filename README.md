@@ -89,7 +89,7 @@ npm run check
 
 `npm run check` 会依次执行 TypeScript 类型检查、测试和构建。
 
-> 在 Linux 上，如果同时满足：以 root 运行、存在 Docker 与 systemd、能找到 SnowLuma 容器，`check` 结束后的 `postcheck` 钩子还会迁移旧版 SnowLuma 配置、执行连接诊断，并安装/刷新 systemd 守护。只想做代码检查时请使用 `PIXIV_CHECK_ONLY=1 npm run check`；设置了 `CI` 环境变量时会自动跳过。
+`npm run check` 只运行本地类型检查、测试和构建；不会连接、迁移或重启 SnowLuma，也不会修改 systemd。需要部署时请显式运行 `npm run deploy:snowluma`。
 
 ---
 
@@ -283,7 +283,7 @@ node dist/snowluma.mjs
 - 上表变量只被 `dist/snowluma.mjs` 和部署脚本读取；原生模式不使用它们，原生模式的配置文件路径由 NapCat 提供。
 - 带 `--auto` 运行时（`npm run start:snowluma`、`npm run doctor:snowluma` 和 systemd 守护都是如此）只做 Docker 自动发现，会忽略地址与 Token 变量。需要手动地址时不要加 `--auto`。
 - 只设置了地址、没有设置 Token 时：只有地址指向本机回环（`localhost`、`127.x.x.x`、`::1`）才会沿用自动发现的 Token；指向其他主机必须显式设置 Token，本机 Token 不会被发送给远程服务端。
-- 部署脚本还会读取 `PIXIV_BRANCH`（要部署的分支，默认 `main`）；`PIXIV_CHECK_ONLY=1` 或设置了 `CI` 时，`npm run check` 不会安装守护。
+- 部署脚本还会读取 `PIXIV_BRANCH`（要部署的分支，默认 `main`）；只有显式运行 `npm run deploy:snowluma` 才会使用它。
 
 ---
 
@@ -301,6 +301,9 @@ node dist/snowluma.mjs
 | `#pixiv` | 随机推荐插画 |
 | `#pixiv随机` | 随机推荐插画 |
 | `#pixiv <关键词>` | 按关键词搜索 |
+| `#pixiv pid <作品ID>` | 按 PID 查询作品 |
+| `#pixiv uid <UID>` | 获取画师最新作品 |
+| `#pixiv rank day` / `week` / `month` | Pixiv 日榜、周榜或月榜 |
 | `#pixivpid <作品ID>` | 按 PID 查询作品 |
 | `#pixiv画师 <UID>` | 获取画师最新作品 |
 | `#pixivuid <UID>` | 获取画师最新作品 |
@@ -354,7 +357,9 @@ node dist/snowluma.mjs
 - 群聊：使用 `send_group_forward_msg`。
 - 私聊：使用 `send_private_forward_msg`。
 - 合并转发失败：自动逐条发送。
-- 单图发送失败：继续降级为文字和作品链接。
+- 单张图片发送失败：该作品降级为标题、作者、PID 和 Pixiv 链接；其余结果继续发送。
+- 上游未提供图片 URL：直接发送作品文字和 Pixiv 链接。
+- 逐条回退仍有结果发送失败时：保留已发送结果，并提示成功数量。
 
 关闭合并转发：
 
@@ -714,7 +719,7 @@ napcat-plugin-pixiv/
 └── LICENSE
 ```
 
-构建时 Vite 会生成 `dist/index.mjs` 和 `dist/snowluma.mjs`，并把运行所需的 `package.json`、`README.md` 与 `LICENSE` 一并复制到 `dist/`。
+构建时 Vite 会生成 `dist/index.mjs` 和 `dist/snowluma.mjs`，并把运行所需的 `package.json`、`README.md`、`LICENSE` 与 `config.example.json` 一并复制到 `dist/`。示例配置不包含私密配置值。
 
 ---
 
@@ -727,6 +732,8 @@ napcat-plugin-pixiv/
 - Pixiv 图片反代：`i.pixiv.re`
 
 这些均为第三方服务，并非本项目维护。
+
+关键词搜索优先使用 Lolicon；请求失败时最多回退到 Pixiv/Hibi 搜索一次，空结果不会触发回退。PID、画师和榜单操作仍使用 Hibi 对应接口；随机推荐仍使用 Lolicon。
 
 当出现搜索失败时，优先使用：
 
