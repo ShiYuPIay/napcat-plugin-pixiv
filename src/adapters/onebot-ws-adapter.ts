@@ -123,7 +123,8 @@ export class OneBotWsAdapter implements BotAdapter {
     });
 
     socket.addEventListener('message', (event) => {
-      this.handleFrame(event.data).catch((error) => {
+      if (this.stopped || this.socket !== socket) return;
+      this.handleFrame(event.data, socket).catch((error) => {
         log.error(`OneBot 数据帧处理失败：${error instanceof Error ? error.message : String(error)}`);
       });
     });
@@ -155,7 +156,7 @@ export class OneBotWsAdapter implements BotAdapter {
     }, delay);
   }
 
-  private async handleFrame(data: unknown): Promise<void> {
+  private async handleFrame(data: unknown, source: WebSocket): Promise<void> {
     let text: string;
     if (typeof data === 'string') {
       text = data;
@@ -168,6 +169,10 @@ export class OneBotWsAdapter implements BotAdapter {
     } else {
       return;
     }
+
+    // Blob.text() is asynchronous. A frame that started before stop/reconnect
+    // must not be dispatched after its source socket is no longer current.
+    if (this.stopped || this.socket !== source) return;
 
     let parsed: unknown;
     try {
