@@ -13,6 +13,7 @@ import {
   setConfigPath,
 } from './config.ts';
 import { bindLogger, log } from './core/logger.ts';
+import { clearCooldowns } from './core/cooldown.ts';
 import { handleMessage } from './handlers/message-handler.ts';
 import type { MessageEvent } from './types.ts';
 
@@ -61,6 +62,7 @@ function prepareContext(ctx: NapCatPluginContext): NapCatContextLike {
 
 export const plugin_init: PluginModule['plugin_init'] = async (ctx) => {
   prepareContext(ctx);
+  clearCooldowns();
   resetConfig();
   plugin_config_ui = buildConfigSchema(ctx);
   const result = loadConfig();
@@ -103,6 +105,7 @@ export const plugin_on_config_change: PluginModule['plugin_on_config_change'] =
 
 export const plugin_cleanup: PluginModule['plugin_cleanup'] = async (ctx) => {
   prepareContext(ctx);
+  clearCooldowns();
   log.info('Pixiv 插件已卸载');
   bindLogger(null);
 };

@@ -5,6 +5,7 @@ import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
 import {
   isLoopbackUrl,
+  loadSnowLumaConnectionCredential,
   resolveEffectiveWsServer,
   resolveSnowLumaConnection,
 } from '../src/runtime/snowluma-discovery.ts';
@@ -137,6 +138,25 @@ test('Api-only ws server is rejected because the plugin also needs message event
     },
   });
   assert.equal(result, null);
+});
+
+test('systemd connection credentials are validated without logging or exposing the token', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'snowluma-credential-'));
+  const file = join(dir, 'connection.json');
+  try {
+    writeFileSync(file, JSON.stringify({ url: 'ws://127.0.0.1:3001/', accessToken: 'local-secret' }));
+    const connection = loadSnowLumaConnectionCredential(file);
+    assert.equal(connection.url, 'ws://127.0.0.1:3001/');
+    assert.equal(connection.accessToken, 'local-secret');
+
+    writeFileSync(file, JSON.stringify({ url: 'https://example.com/', accessToken: 'local-secret' }));
+    assert.throws(() => loadSnowLumaConnectionCredential(file), /invalid WebSocket URL/);
+
+    writeFileSync(file, '{');
+    assert.throws(() => loadSnowLumaConnectionCredential(file), /not valid JSON/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('only loopback hosts count as local', () => {

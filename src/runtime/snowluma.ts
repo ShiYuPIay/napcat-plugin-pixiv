@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { resolve } from 'node:path';
+import { writeSync } from 'node:fs';
 import { OneBotWsAdapter } from '../adapters/onebot-ws-adapter.ts';
 import {
   applyEnvironment,
@@ -11,6 +12,7 @@ import {
 import { bindLogger, log, redactUrlForLog } from '../core/logger.ts';
 import { handleMessage } from '../handlers/message-handler.ts';
 import {
+  loadSnowLumaConnectionCredential,
   resolveSnowLumaConnection,
   type SnowLumaConnection,
 } from './snowluma-discovery.ts';
@@ -20,6 +22,7 @@ bindLogger(null);
 const args = new Set(process.argv.slice(2));
 const forceDocker = args.has('--auto');
 const doctorMode = args.has('--doctor');
+const exportConnection = args.has('--export-connection');
 
 function configurePixiv(): void {
   const requested = process.env.PIXIV_CONFIG_FILE?.trim();
@@ -52,15 +55,26 @@ function configurePixiv(): void {
   }
 }
 
-configurePixiv();
+if (!exportConnection) configurePixiv();
 
 let connection: SnowLumaConnection;
 try {
-  connection = resolveSnowLumaConnection({ forceDocker });
+  const credentialPath = process.env.ONEBOT_CONNECTION_FILE?.trim();
+  connection = exportConnection
+    ? resolveSnowLumaConnection({ forceDocker: true })
+    : credentialPath
+      ? loadSnowLumaConnectionCredential(credentialPath)
+      : resolveSnowLumaConnection({ forceDocker });
 } catch (error) {
-  log.error(`SnowLuma 自动发现失败：${error instanceof Error ? error.message : String(error)}`);
+  const message = error instanceof Error ? error.message : String(error);
+  log.error(`${process.env.ONEBOT_CONNECTION_FILE ? '读取 SnowLuma 连接凭据失败' : 'SnowLuma 自动发现失败'}：${message}`);
   log.error('请确认 Docker 容器正在运行，默认容器名应为 snowluma；自定义容器名可设置 SNOWLUMA_CONTAINER。');
   process.exit(2);
+}
+
+if (exportConnection) {
+  writeSync(1, `${JSON.stringify({ url: connection.url, accessToken: connection.accessToken })}\n`);
+  process.exit(0);
 }
 
 function requestTimeoutFromEnv(): number {
@@ -84,7 +98,8 @@ bot.start((event) => handleMessage(event, bot));
 log.info(`SnowLuma/OneBot 模式已启动，目标 ${redactUrlForLog(connection.url)}`);
 const connectionSource = connection.source.startsWith('Docker ')
   ? 'Docker 自动发现'
-  : connection.source === '默认配置' ? '默认配置' : '环境变量';
+  : connection.source === 'systemd credential' ? 'systemd 凭据'
+    : connection.source === '默认配置' ? '默认配置' : '环境变量';
 log.info(`连接配置来源：${connectionSource} / accessToken=${connection.accessToken ? '已配置' : '未配置'}`);
 
 async function waitUntilConnected(timeoutMs: number): Promise<void> {

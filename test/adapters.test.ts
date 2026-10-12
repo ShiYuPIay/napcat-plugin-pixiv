@@ -107,6 +107,10 @@ class FakeWebSocket {
     this.emit('message', { data });
   }
 
+  emitBlob(data: Blob): void {
+    this.emit('message', { data });
+  }
+
   protected emit(type: string, event: any): void {
     for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
@@ -293,6 +297,72 @@ test('calling start() twice keeps a single connection', async () => {
     bot.start(() => {});
     await flush();
     assert.equal(FakeWebSocket.created, 1);
+    bot.stop();
+  });
+});
+
+test('frames received after stop() are not dispatched to the event handler', async () => {
+  await withWebSocket(FakeWebSocket, async () => {
+    const events: MessageEvent[] = [];
+    const bot = new OneBotWsAdapter({ url: 'ws://127.0.0.1:3001/' });
+    bot.start((event) => { events.push(event); });
+    await flush();
+    const socket = FakeWebSocket.latest;
+    if (!socket) throw new Error('fake WebSocket was not created');
+
+    bot.stop();
+    socket.emitEvent({ post_type: 'message', message_type: 'group', group_id: '1', user_id: '2' });
+    await flush();
+    assert.equal(events.length, 0);
+  });
+});
+
+test('a Blob frame that finishes decoding after stop() is discarded', async () => {
+  class DeferredBlob extends Blob {
+    private complete!: (text: string) => void;
+    override text(): Promise<string> {
+      return new Promise((resolve) => { this.complete = resolve; });
+    }
+    finish(text: string): void { this.complete(text); }
+  }
+
+  await withWebSocket(FakeWebSocket, async () => {
+    const events: MessageEvent[] = [];
+    const bot = new OneBotWsAdapter({ url: 'ws://127.0.0.1:3001/' });
+    bot.start((event) => { events.push(event); });
+    await flush();
+    const socket = FakeWebSocket.latest;
+    if (!socket) throw new Error('fake WebSocket was not created');
+    const blob = new DeferredBlob([]);
+
+    socket.emitBlob(blob);
+    bot.stop();
+    blob.finish(JSON.stringify({ post_type: 'message', message_type: 'group', group_id: '1', user_id: '2' }));
+    await flush();
+    assert.equal(events.length, 0);
+  });
+});
+
+test('a replaced socket cannot dispatch late frames after reconnect', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withWebSocket(FakeWebSocket, async () => {
+    const events: MessageEvent[] = [];
+    const bot = new OneBotWsAdapter(RECONNECT_ONE_SECOND);
+    bot.start((event) => { events.push(event); });
+    await flush();
+    const oldSocket = FakeWebSocket.latest;
+    if (!oldSocket) throw new Error('first fake WebSocket was not created');
+
+    oldSocket.close(1011);
+    t.mock.timers.tick(1_100);
+    await flush();
+    const currentSocket = FakeWebSocket.latest;
+    if (!currentSocket || currentSocket === oldSocket) throw new Error('reconnect did not create a new socket');
+
+    oldSocket.emitEvent({ post_type: 'message', message_type: 'group', group_id: 'old', user_id: '2' });
+    currentSocket.emitEvent({ post_type: 'message', message_type: 'group', group_id: 'new', user_id: '2' });
+    await flush();
+    assert.deepEqual(events.map((event) => event.group_id), ['new']);
     bot.stop();
   });
 });

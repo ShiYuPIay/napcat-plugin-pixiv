@@ -67,7 +67,7 @@
 | NapCat（外部模式） | 在网络配置中新建 OneBot v11「WebSocket 服务器」 |
 | NapCat（原生模式，Legacy） | `>= 4.14.0`，且加载器须放行本插件（见上文兼容性说明） |
 | SnowLuma | OneBot v11 WebSocket 可用 |
-| Linux SnowLuma 自动部署 | Docker + systemd |
+| Linux SnowLuma 自动部署 | Docker + systemd 247+ |
 
 升级 npm：
 
@@ -136,6 +136,8 @@ bash scripts/deploy-snowluma.sh
 9. 执行 WebSocket 鉴权和 `get_login_info` 诊断。
 10. 安装或更新 systemd 服务。
 11. 开启开机自启并启动插件。
+
+systemd 服务会以专用的 `napcat-plugin-pixiv` 非 root 用户运行，不加入 Docker 特权组。安装时由 root 读取一次 SnowLuma 的 WebSocket 地址和 token，交给 systemd `LoadCredential`；运行中的服务不直接访问 Docker socket。已构建程序和 Node.js 运行时复制到 `/opt/napcat-plugin-pixiv/releases/` 的 root-owned 发布目录，配置保存在 `/var/lib/napcat-plugin-pixiv/config.json`。重新部署会刷新连接凭据和发布目录；安装或连接健康检查失败时会恢复之前的 service unit 与凭据。
 
 默认 SnowLuma Docker 容器名称为：
 

@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 interface JsonRecord {
   [key: string]: unknown;
@@ -30,6 +31,30 @@ export interface SnowLumaConnection {
   source: string;
   uin?: string;
   role?: string;
+}
+
+export function loadSnowLumaConnectionCredential(filePath: string): SnowLumaConnection {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(filePath, 'utf8')) as unknown;
+  } catch {
+    throw new Error('SnowLuma connection credential is missing or is not valid JSON');
+  }
+  if (!isRecord(parsed) || typeof parsed.url !== 'string' || typeof parsed.accessToken !== 'string') {
+    throw new Error('SnowLuma connection credential has an invalid shape');
+  }
+
+  let url: URL;
+  try {
+    url = new URL(parsed.url);
+  } catch {
+    throw new Error('SnowLuma connection credential contains an invalid WebSocket URL');
+  }
+  if (!['ws:', 'wss:'].includes(url.protocol) || url.username || url.password) {
+    throw new Error('SnowLuma connection credential contains an invalid WebSocket URL');
+  }
+
+  return { url: url.toString(), accessToken: parsed.accessToken, source: 'systemd credential' };
 }
 
 function isRecord(value: unknown): value is JsonRecord {

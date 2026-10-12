@@ -18,11 +18,17 @@ const names = fs.readdirSync(configDir)
   .filter((name) => /^onebot(?:_\d+)?\.json$/.test(name))
   .filter((name) => !preferredUin || name === 'onebot.json' || name === 'onebot_' + preferredUin + '.json')
   .sort();
-const changed = [];
+const pending = [];
 for (const name of names) {
   const file = path.join(configDir, name);
+  const metadata = fs.lstatSync(file);
+  if (!metadata.isFile()) throw new Error('refusing to migrate a non-regular config file: ' + file);
   let cfg;
-  try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { continue; }
+  try {
+    cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    throw new Error('invalid JSON in ' + file);
+  }
   const networks = cfg && typeof cfg === 'object' ? cfg.networks : null;
   const clients = Array.isArray(networks?.wsClients)
     ? networks.wsClients
@@ -37,15 +43,69 @@ for (const name of names) {
     touched = true;
   }
   if (!touched) continue;
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const backup = file + '.bak-napcat-plugin-pixiv-' + stamp;
-  fs.copyFileSync(file, backup);
-  const temp = file + '.tmp-napcat-plugin-pixiv';
-  fs.writeFileSync(temp, JSON.stringify(cfg, null, 2) + '\n');
-  fs.renameSync(temp, file);
-  changed.push({ file, backup });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-') + '-' + process.pid;
+  pending.push({
+    file,
+    backup: file + '.bak-napcat-plugin-pixiv-' + stamp,
+    temp: file + '.tmp-napcat-plugin-pixiv-' + process.pid,
+    uid: metadata.uid,
+    gid: metadata.gid,
+    mode: metadata.mode & 0o7777,
+    content: JSON.stringify(cfg, null, 2) + '\n',
+  });
 }
-process.stdout.write(JSON.stringify({ configDir, changed }));
+if (pending.length === 0) {
+  process.stdout.write(JSON.stringify({ configDir, changed: [] }));
+  process.exit(0);
+}
+
+const staged = [];
+const committed = [];
+try {
+  for (const item of pending) {
+    fs.copyFileSync(item.file, item.backup, fs.constants.COPYFILE_EXCL);
+    staged.push(item);
+    fs.chownSync(item.backup, item.uid, item.gid);
+    fs.chmodSync(item.backup, item.mode);
+    fs.writeFileSync(item.temp, item.content, { flag: 'wx', mode: item.mode });
+    fs.chownSync(item.temp, item.uid, item.gid);
+    fs.chmodSync(item.temp, item.mode);
+  }
+  for (const item of pending) {
+    fs.renameSync(item.temp, item.file);
+    committed.push(item);
+  }
+} catch (error) {
+  const rollbackErrors = [];
+  for (const item of committed.reverse()) {
+    try {
+      const restoreTemp = item.file + '.restore-napcat-plugin-pixiv-' + process.pid;
+      fs.copyFileSync(item.backup, restoreTemp, fs.constants.COPYFILE_EXCL);
+      fs.chownSync(restoreTemp, item.uid, item.gid);
+      fs.chmodSync(restoreTemp, item.mode);
+      fs.renameSync(restoreTemp, item.file);
+    } catch (rollbackError) {
+      rollbackErrors.push(String(rollbackError));
+    }
+  }
+  for (const item of staged) {
+    try { fs.rmSync(item.temp, { force: true }); } catch {}
+  }
+  if (committed.length === 0) {
+    for (const item of staged) {
+      try { fs.rmSync(item.backup, { force: true }); } catch {}
+    }
+  }
+  const detail = error instanceof Error ? error.message : String(error);
+  throw new Error(rollbackErrors.length
+    ? 'migration failed: ' + detail + '; rollback also failed: ' + rollbackErrors.join('; ')
+    : 'migration failed and changed files were restored: ' + detail);
+}
+
+process.stdout.write(JSON.stringify({
+  configDir,
+  changed: pending.map(({ file, backup }) => ({ file, backup })),
+}));
 `;
 
 try {
@@ -72,5 +132,6 @@ try {
   execFileSync('docker', ['restart', container], { stdio: 'inherit', timeout: 60_000 });
   console.log('[napcat-plugin-pixiv] SnowLuma 已重启，接下来会自动重试真实 OneBot 连接。');
 } catch (error) {
-  console.warn(`[napcat-plugin-pixiv] SnowLuma 旧配置迁移跳过：${error instanceof Error ? error.message : String(error)}`);
+  console.error(`[napcat-plugin-pixiv] SnowLuma 旧配置迁移失败，部署已中止：${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
 }

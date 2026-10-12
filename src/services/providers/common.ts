@@ -1,6 +1,14 @@
 import { getConfig, isBlockedText } from '../../config.ts';
 import type { PixivItem } from '../../types.ts';
 
+function configuredProxyUrl(value: string): URL | null {
+  try {
+    return new URL(`https://${value}`);
+  } catch {
+    return null;
+  }
+}
+
 export function proxyImageUrl(rawUrl: unknown): string | null {
   if (typeof rawUrl !== 'string' || !rawUrl) return null;
   const { imageProxy } = getConfig();
@@ -12,16 +20,31 @@ export function proxyImageUrl(rawUrl: unknown): string | null {
     return null;
   }
 
-  // Upstream data is untrusted and the OneBot image `file` field also accepts
-  // local paths and base64, so only plain web URLs may be passed through.
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  // The OneBot image `file` field may make the bot server fetch arbitrary URLs.
+  // Only trust Pixiv's CDN and the proxy host explicitly configured by an admin.
+  if (url.protocol !== 'https:' || url.username || url.password) return null;
 
-  if (url.hostname === 'i.pximg.net' && imageProxy) {
-    const [host, port] = imageProxy.split(':');
-    url.hostname = host;
-    if (port) url.port = port;
+  if (url.hostname.toLowerCase() === 'i.pximg.net') {
+    if (url.port) return null;
+    if (imageProxy) {
+      const proxy = configuredProxyUrl(imageProxy);
+      if (!proxy) return null;
+      url.hostname = proxy.hostname;
+      url.port = proxy.port;
+    }
+    return url.toString();
   }
-  return url.toString();
+
+  const proxy = configuredProxyUrl(imageProxy);
+  if (
+    proxy
+    && url.hostname.toLowerCase() === proxy.hostname.toLowerCase()
+    && url.port === proxy.port
+  ) {
+    return url.toString();
+  }
+
+  return null;
 }
 
 export function applyContentPolicy(items: PixivItem[]): PixivItem[] {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import { applyConfig, resetConfig } from '../src/config.ts';
-import { fetchJson } from '../src/services/http.ts';
+import { fetchJson, MAX_JSON_RESPONSE_BYTES } from '../src/services/http.ts';
 
 const realFetch = globalThis.fetch;
 
@@ -24,8 +24,63 @@ test('a body that is not JSON is reported as invalid JSON', async () => {
   await assert.rejects(fetchJson('Lolicon', 'https://example.test/x'), /Lolicon returned invalid JSON/);
 });
 
+test('a non-JSON content type is rejected before parsing its body', async () => {
+  stubFetch(async () => new Response('<html>blocked</html>', {
+    status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+  }));
+  await assert.rejects(
+    fetchJson('Lolicon', 'https://example.test/x'),
+    /Lolicon returned an unexpected content type/,
+  );
+});
+
+test('an oversized declared Content-Length is rejected before reading the body', async () => {
+  let cancelled = false;
+  stubFetch(async () => new Response(new ReadableStream<Uint8Array>({
+    cancel() { cancelled = true; },
+  }), {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      'content-length': String(MAX_JSON_RESPONSE_BYTES + 1),
+    },
+  }));
+  await assert.rejects(
+    fetchJson('Lolicon', 'https://example.test/x'),
+    /Lolicon response exceeds 2097152 byte limit/,
+  );
+  assert.equal(cancelled, true);
+});
+
+test('a streamed response is cancelled when its byte limit is exceeded', async () => {
+  stubFetch(async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(MAX_JSON_RESPONSE_BYTES + 1));
+      controller.close();
+    },
+  }), { status: 200, headers: { 'content-type': 'application/json' } }));
+  await assert.rejects(
+    fetchJson('Lolicon', 'https://example.test/x'),
+    /Lolicon response exceeds 2097152 byte limit/,
+  );
+});
+
+test('caller cancellation and the configured request timeout both reach fetch', async () => {
+  const caller = new AbortController();
+  stubFetch(async (init) => {
+    assert.notEqual(init?.signal, caller.signal);
+    caller.abort(new Error('caller cancelled'));
+    assert.equal(init?.signal?.aborted, true);
+    throw init?.signal?.reason;
+  });
+  await assert.rejects(
+    fetchJson('Lolicon', 'https://example.test/x', { signal: caller.signal }),
+    /Lolicon request failed: caller cancelled/,
+  );
+});
+
 test('a timeout while reading the body is a request failure, not invalid JSON', async () => {
-  // Headers arrive, then the body stalls until the request timeout aborts it.
   stubFetch(async (init) => {
     const signal = init?.signal as AbortSignal;
     const body = new ReadableStream<Uint8Array>({
@@ -33,7 +88,7 @@ test('a timeout while reading the body is a request failure, not invalid JSON', 
         signal.addEventListener('abort', () => controller.error(signal.reason));
       },
     });
-    return new Response(body, { status: 200 });
+    return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
   });
   applyConfig({ requestTimeoutMs: 1_000 });
 
@@ -43,9 +98,9 @@ test('a timeout while reading the body is a request failure, not invalid JSON', 
     await assert.rejects(
       fetchJson('Lolicon', 'https://example.test/x'),
       (error: Error) =>
-        /request failed/.test(error.message) &&
-        /timeout/i.test(error.message) &&
-        !/invalid JSON/.test(error.message),
+        /request failed/.test(error.message)
+        && /timeout/i.test(error.message)
+        && !/invalid JSON/.test(error.message),
     );
   } finally {
     clearTimeout(keepAlive);

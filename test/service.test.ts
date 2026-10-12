@@ -65,9 +65,10 @@ test('content policy filters R18, AI and blocked content by default', () => {
   assert.deepEqual(applyContentPolicy(items).map((item) => item.pid), ['1', '2', '3']);
 });
 
-test('image URLs from upstream are limited to plain http(s) URLs', () => {
+test('image URLs from upstream are limited to the Pixiv CDN and configured proxy', () => {
   assert.equal(proxyImageUrl('https://i.pximg.net/a.jpg'), 'https://i.pixiv.re/a.jpg');
-  assert.equal(proxyImageUrl('https://cdn.example.com/a.jpg'), 'https://cdn.example.com/a.jpg');
+  assert.equal(proxyImageUrl('https://i.pixiv.re/a.jpg'), 'https://i.pixiv.re/a.jpg');
+  assert.equal(proxyImageUrl('https://cdn.example.com/a.jpg'), null);
 
   // OneBot's image `file` field also accepts local paths and base64, so an
   // untrusted upstream value of that kind must never reach it.
@@ -79,8 +80,23 @@ test('image URLs from upstream are limited to plain http(s) URLs', () => {
     'data:image/png;base64,AAAA',
     '//i.pximg.net/a.jpg',
     'javascript:alert(1)',
+    'http://i.pximg.net/a.jpg',
+    'https://127.0.0.1/latest/meta-data',
+    'https://169.254.169.254/latest/meta-data',
+    'https://localhost/admin',
+    'https://i.pximg.net.attacker.example/a.jpg',
+    'https://user@i.pximg.net/a.jpg',
   ]) {
     assert.equal(proxyImageUrl(hostile), null, hostile);
   }
+  assert.equal(proxyImageUrl('https://i.pximg.net:8443/a.jpg'), null);
   assert.equal(proxyImageUrl(undefined), null);
+
+  applyConfig({ imageProxy: 'images.example.com:8443' });
+  assert.equal(
+    proxyImageUrl('https://i.pximg.net/a.jpg'),
+    'https://images.example.com:8443/a.jpg',
+  );
+  assert.equal(proxyImageUrl('https://images.example.com:8443/a.jpg'), 'https://images.example.com:8443/a.jpg');
+  assert.equal(proxyImageUrl('https://images.example.com:8444/a.jpg'), null);
 });
