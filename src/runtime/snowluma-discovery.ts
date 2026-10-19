@@ -307,7 +307,7 @@ export function resolveSnowLumaConnection(
   const inheritedToken = explicitUrl && !isLoopbackUrl(explicitUrl) ? undefined : discovered?.accessToken;
 
   return {
-    url: explicitUrl ?? discovered?.url ?? 'ws://127.0.0.1:3001/',
+    url: explicitUrl ?? discovered?.url ?? 'ws://172.19.0.1:2536/OneBotv11',
     accessToken: explicitToken ?? inheritedToken ?? '',
     source: explicitUrl || explicitToken
       ? `环境变量${discovered ? ' + Docker 自动补全' : ''}`
