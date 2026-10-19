@@ -271,7 +271,7 @@ node dist/snowluma.mjs
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `ONEBOT_WS_URL`、`SNOWLUMA_WS_URL`、`NAPCAT_WS_URL` | 自动发现，否则 `ws://127.0.0.1:3001/` | WebSocket 地址，按此顺序取第一个非空值 |
+| `ONEBOT_WS_URL`、`SNOWLUMA_WS_URL`、`NAPCAT_WS_URL` | 自动发现，否则 `ws://172.19.0.1:2536/OneBotv11`（trssbot 专用适配器） | WebSocket 地址，按此顺序取第一个非空值 |
 | `ONEBOT_ACCESS_TOKEN`、`SNOWLUMA_TOKEN`、`NAPCAT_WS_TOKEN` | 自动发现，否则空 | Access Token，同样按顺序取第一个非空值，以 `access_token` 查询参数发送 |
 | `ONEBOT_REQUEST_TIMEOUT_MS` | `30000` | 单个 OneBot Action 的超时（整数毫秒，实际不低于 1000）；无效值会被忽略并记录警告 |
 | `PIXIV_CONFIG_FILE` | `./config.json` | 配置文件路径，相对于进程的当前目录 |
