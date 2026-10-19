@@ -187,10 +187,15 @@ if (command === 'exec') {
 }
 `;
 
-function withFakeDocker(run: () => void): void {
+// A stand-in `docker` that always fails, so there is no SnowLuma container to discover.
+const FAILING_DOCKER = `#!/usr/bin/env node
+process.exit(1);
+`;
+
+function withFakeDocker(run: () => void, script = FAKE_DOCKER): void {
   const dir = mkdtempSync(join(tmpdir(), 'fake-docker-'));
   const bin = join(dir, 'docker');
-  writeFileSync(bin, FAKE_DOCKER);
+  writeFileSync(bin, script);
   chmodSync(bin, 0o755);
   const realPath = process.env.PATH;
   process.env.PATH = `${dir}${delimiter}${realPath ?? ''}`;
@@ -225,4 +230,21 @@ test('connection resolution only lends the Docker token to local URLs', { skip: 
     assert.equal(tokenOnly.url, 'ws://127.0.0.1:3001/');
     assert.equal(tokenOnly.accessToken, 'explicit');
   });
+});
+
+
+test('with no explicit URL and no discoverable Docker SnowLuma, the fallback is the trssbot adapter address', { skip: process.platform === 'win32' }, () => {
+  withFakeDocker(() => {
+    const fallback = resolveSnowLumaConnection({ env: {} });
+    assert.equal(fallback.url, 'ws://172.19.0.1:2536/OneBotv11');
+    assert.equal(fallback.accessToken, '', 'no token is invented for a non-loopback fallback');
+    assert.equal(fallback.source, '默认配置');
+
+    const withToken = resolveSnowLumaConnection({ env: { ONEBOT_ACCESS_TOKEN: 'explicit' } });
+    assert.equal(withToken.url, 'ws://172.19.0.1:2536/OneBotv11');
+    assert.equal(withToken.accessToken, 'explicit');
+
+    const explicit = resolveSnowLumaConnection({ env: { ONEBOT_WS_URL: 'ws://127.0.0.1:3001/' } });
+    assert.equal(explicit.url, 'ws://127.0.0.1:3001/', 'an explicit URL still wins over the fallback');
+  }, FAILING_DOCKER);
 });
